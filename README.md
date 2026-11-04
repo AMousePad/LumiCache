@@ -1,6 +1,6 @@
 # LumiCache
 
-*For many including myself, caching during RP has been some far away dream. A garden of salvation in the desert. A glimmer of hope in the darkness. And yet, despite your best efforts, you helplessly watch as the money you've earned with your gradually dwindling lifespan withers away into nothing but dust, leaving you in a dark and destitute wasteland for the rest of your puny life. And at the end you may wonder, "for what reason did I suffer?"*
+*For many including myself, caching during RP has been some far away dream. An oasis in the desert. A glimmer of hope. And yet, despite your best efforts, you helplessly watch as the money you've earned with your ever dwindling lifespan withers away into nothing but dust, leaving you in a dark and destitute wasteland for the rest of your puny life. And at the end you may wonder, "for what reason did I suffer?"*
 
 *But do not despair, for not all is lost.*
 
