@@ -1309,6 +1309,9 @@ var DEFAULT_SETTINGS = {
   overflowPlacement: "end",
   refreshEnabled: true,
   refreshEvery: 20,
+  autoRefreshEnabled: false,
+  autoRefreshMinutes: 4,
+  autoRefreshLimit: 3,
   hiddenCategories: []
 };
 var COVERAGE = "Compares assembled prompts before sending. Later host/provider changes, tools, cache expiry and provider cache state are not visible here. This is a cache-risk check, not a confirmed cache hit or miss.";
@@ -1324,14 +1327,15 @@ function validateSettings(value) {
   const result = { ...DEFAULT_SETTINGS, ...v };
   if (!["pause", "warn", "off"].includes(result.mode))
     throw new Error("Choose Pause, Warn or Off for LumiCache.");
-  for (const [key, max] of [["acceptableDepth", 1e5], ["acceptableTokens", 2000000], ["refreshEvery", 1e5]]) {
+  for (const [key, max] of [["acceptableDepth", 1e5], ["acceptableTokens", 2000000], ["refreshEvery", 1e5], ["autoRefreshMinutes", 1440], ["autoRefreshLimit", 1000]]) {
     const n = result[key];
-    if (key !== "refreshEvery" && n === null)
+    const required = key !== "acceptableDepth" && key !== "acceptableTokens";
+    if (!required && n === null)
       continue;
-    if (typeof n !== "number" || !Number.isInteger(n) || n < (key === "refreshEvery" ? 1 : 0) || n > max)
-      throw new Error(`Invalid ${key}: enter a whole number${key === "refreshEvery" ? " greater than zero" : " or leave the limit blank"}.`);
+    if (typeof n !== "number" || !Number.isInteger(n) || n < (required ? 1 : 0) || n > max)
+      throw new Error(`Invalid ${key}: enter a whole number${required ? " greater than zero" : " or leave the limit blank"}.`);
   }
-  for (const key of ["forceConsistency", "refreshEnabled"])
+  for (const key of ["forceConsistency", "refreshEnabled", "autoRefreshEnabled"])
     if (typeof result[key] !== "boolean")
       throw new Error(`Invalid ${key}.`);
   if (!["end", "boundary"].includes(result.overflowPlacement))
@@ -1346,6 +1350,9 @@ function validateSettings(value) {
     overflowPlacement: result.overflowPlacement,
     refreshEnabled: result.refreshEnabled,
     refreshEvery: result.refreshEvery,
+    autoRefreshEnabled: result.autoRefreshEnabled,
+    autoRefreshMinutes: result.autoRefreshMinutes,
+    autoRefreshLimit: result.autoRefreshLimit,
     hiddenCategories: [...new Set(result.hiddenCategories)]
   };
 }
@@ -1711,7 +1718,7 @@ class Guard {
         this.toastBreak(messages, check, context, "warning", (depth) => `Cache has been broken at depth ${depth}!`, (tokens) => `${tokens} tokens will be recached \uD83D\uDCB8.`);
       else if (planned && check.comparison.kind === "break" && !routeChanged)
         this.toastBreak(messages, check, context, "success", () => "LumiBooks Compaction Successful.", (tokens) => `Gracefully re-caching ${tokens} tokens \uD83D\uDC96.`);
-      this.candidates.set(this.key(context.userId, context.generationId), { key: this.key(context.userId, context.chatId, context.scope), userId: context.userId, check, retained, refresh, epoch });
+      this.candidates.set(this.key(context.userId, context.generationId), { key: this.key(context.userId, context.chatId, context.scope), userId: context.userId, check, retained, refresh, epoch, connection: context.mainDispatch.descriptor?.connectionId });
       this.notify(context.userId, context.chatId, context.frontendSessionId);
       return messages;
     } catch (error) {
@@ -1725,14 +1732,18 @@ class Guard {
       throw error;
     }
   }
+  prompt(user, chat) {
+    const state = this.chats.get(this.key(user, chat));
+    return state?.baseline && state.retained && state.connection ? { messages: state.retained.messages, connectionId: state.connection, model: state.baseline.model } : null;
+  }
   finish(user, generation, success, replyId) {
     const key = this.key(user, generation), candidate = this.candidates.get(key);
     if (!candidate)
-      return;
+      return false;
     this.candidates.delete(key);
     const state = this.chats.get(candidate.key);
     if (!state || state.check !== candidate.check)
-      return;
+      return false;
     state.busy = false;
     candidate.check.status = success ? "completed" : "failed";
     state.candidate = undefined;
@@ -1741,10 +1752,12 @@ class Guard {
       state.retained = candidate.retained;
       state.replies = candidate.refresh ? 1 : state.replies + 1;
       state.epoch = candidate.epoch;
+      state.connection = candidate.connection;
       const [, chat, scope] = JSON.parse(candidate.key), after = candidate.check.after;
       this.store?.save(user, chat, scope, { at: after.at, route: after.route, model: after.model, messages: candidate.retained.messages, replies: state.replies, epoch: state.epoch }, replyId);
     }
     this.notify(user, candidate.check.chatId);
+    return success;
   }
 }
 
@@ -3643,10 +3656,11 @@ Reset comparison (gear) clears the chat's native and CAT baselines; the next suc
   {
     id: "policy",
     label: "Settings, mutable tail and forced consistency",
-    text: `Settings are per user; edit the gear panel then Save settings. Defaults: mode=warn, acceptableDepth=5, acceptableTokens=null, forceConsistency=false, overflowPlacement=end, refreshEnabled=true, refreshEvery=20.
+    text: `Settings are per user; edit the gear panel then Save settings. Defaults: mode=warn, acceptableDepth=5, acceptableTokens=null, forceConsistency=false, overflowPlacement=end, refreshEnabled=true, refreshEvery=20, autoRefreshEnabled=false, autoRefreshMinutes=4, autoRefreshLimit=3.
 Mutable tail: acceptableDepth counts history messages from the most recent (0 allows none; blank ignores depth). History token limit bounds that tail using Lumiverse's possibly approximate tokenizer (blank ignores tokens). Both set limits apply; both blank allow the history tail, not the leading instruction prefix. Ordinary tail tolerance requires existing history content/identity to remain unchanged. Connection/model/dispatch changes still count as breaks.
 Force cache consistency restores the previous outgoing protected prefix, instructions/lore and prior history content; newly appended history remains. Fresh out-of-range injections move after the last message (end) or to the allowed boundary (boundary). Visible chat edits remain intact but may not reach the model until refresh/reset; frozen guidance may remain in old history. Requires preserved history source IDs and indexes; another extension stripping them can make it fail. Context limits still apply.
 Allow scheduled cache breaks accepts current content after refreshEvery successful replies, then establishes a new baseline on success. It only runs with forced consistency, since a prompt that is not frozen has nothing to release. A published LumiBooks epoch replaces the timer; route changes still require normal review. Reset comparison applies current content on the next successful send.
+Keep Cache Warm (autoRefreshEnabled) resends the last successful prompt of the chat the user sent in last, with minimal output, every autoRefreshMinutes up to autoRefreshLimit times per reply. Each one is billed. Turn it on or off from the input bar drawer or settings; while it runs, a banner above the input shows a spinner and a Stop button that turns it off. A new reply restarts the count; deleting a message stops the current run, and it stops itself after a cache miss, an error or a model change. It needs monitoring on and cannot repeat native tools.
 Health category filters (risk/issue/depth) affect display only. They do not change the send policy.`
   },
   {
@@ -4082,6 +4096,135 @@ class AgentBridge {
   }
 }
 
+// src/auto-refresh.ts
+class AutoRefresh {
+  host;
+  minute;
+  jobs = new Map;
+  constructor(host, minute = 60000) {
+    this.host = host;
+    this.minute = minute;
+  }
+  start(user, chat, settings) {
+    const replaced = this.drop(user);
+    if (!settings.autoRefreshEnabled) {
+      if (replaced)
+        this.host.changed(user, null);
+      return;
+    }
+    const job = { chat, every: settings.autoRefreshMinutes * this.minute, limit: settings.autoRefreshLimit, done: 0 };
+    this.jobs.set(user, job);
+    this.wait(user, job);
+  }
+  cancel(user, chat) {
+    const job = this.jobs.get(user);
+    if (!job || chat !== undefined && job.chat !== chat)
+      return;
+    this.drop(user);
+    this.host.changed(user, null);
+  }
+  restart(user, settings) {
+    const job = this.jobs.get(user);
+    if (job)
+      this.start(user, job.chat, settings);
+  }
+  state(user) {
+    const job = this.jobs.get(user);
+    return job ? { chatId: job.chat, done: job.done, limit: job.limit, nextIn: job.next === undefined ? null : Math.max(0, job.next - Date.now()) } : null;
+  }
+  drop(user) {
+    const job = this.jobs.get(user);
+    if (!job)
+      return false;
+    this.jobs.delete(user);
+    clearTimeout(job.timer);
+    job.request?.abort();
+    return true;
+  }
+  interrupt(user, chat) {
+    const job = this.jobs.get(user);
+    if (job?.chat === chat)
+      job.request?.abort();
+  }
+  wait(user, job) {
+    job.next = Date.now() + job.every;
+    job.timer = setTimeout(() => {
+      this.run(user, job);
+    }, job.every);
+    job.timer.unref?.();
+    this.host.changed(user, this.state(user));
+  }
+  async run(user, job) {
+    const live = () => this.jobs.get(user) === job;
+    if (!live())
+      return;
+    if (this.host.busy(user, job.chat))
+      return this.wait(user, job);
+    const prompt = this.host.prompt(user, job.chat);
+    if (!prompt) {
+      this.jobs.delete(user);
+      this.host.changed(user, null);
+      return;
+    }
+    const request = job.request = new AbortController;
+    job.next = undefined;
+    this.host.changed(user, this.state(user));
+    try {
+      const preview = await this.host.generate.dryRun({ chatId: job.chat, connectionId: prompt.connectionId }, user);
+      if (request.signal.aborted) {
+        if (live())
+          this.wait(user, job);
+        return;
+      }
+      if (preview.model !== prompt.model)
+        return this.stop(user, job, "The chat's model changed, so its cached prompt no longer applies.");
+      const { max_context_length: _context, model: _model, ...parameters } = preview.parameters;
+      const budget = parameters.thinking?.budget_tokens;
+      const max_tokens = typeof budget === "number" ? budget + 1 : 1;
+      const result = await this.host.generate.quiet({
+        type: "quiet",
+        messages: prompt.messages,
+        connection_id: prompt.connectionId,
+        parameters: { ...parameters, model: prompt.model, max_tokens },
+        userId: user,
+        signal: request.signal
+      });
+      if (!live())
+        return;
+      job.done++;
+      const usage = reportedUsage({ usage: result?.usage, model: prompt.model }, "");
+      if (usage?.read === 0)
+        return this.stop(user, job, "The last refresh missed the cache, so further refreshes would not help. Try a shorter interval, or this chat may use tools that a refresh can't repeat.");
+      const read = usage?.read === undefined ? "" : ` Read ${usage.read.toLocaleString("en-US")} cached tokens.`;
+      this.host.toast(user, "success", `Cache kept warm (${job.done} of ${job.limit})`, `Kept this chat's prompt cached.${read}`);
+      if (job.done < job.limit)
+        this.wait(user, job);
+      else {
+        this.jobs.delete(user);
+        this.host.changed(user, null);
+      }
+    } catch (error) {
+      if (request.signal.aborted) {
+        if (live())
+          this.wait(user, job);
+        return;
+      }
+      if (live())
+        this.stop(user, job, errorText(error));
+    } finally {
+      if (job.request === request)
+        job.request = undefined;
+    }
+  }
+  stop(user, job, reason) {
+    if (this.jobs.get(user) === job) {
+      this.jobs.delete(user);
+      this.host.changed(user, null);
+    }
+    this.host.toast(user, "warning", "Keep Cache Warm stopped", reason);
+  }
+}
+
 // src/cat-bridge.ts
 var CAT_EXTENSION = "another_one";
 var REQUEST = `${CAT_EXTENSION}.cache_request`;
@@ -4177,6 +4320,17 @@ var health = new HealthService(spindle, (user, chat) => contexts.isActive(user, 
   agent?.progress(user, session, completed, name);
   spindle.sendToFrontend({ type: "simulationProgress", completed, name }, user, { frontendSessionId: session });
 }, settings);
+var autoRefresh = new AutoRefresh({
+  generate: spindle.generate,
+  prompt: (user, chat) => guard.prompt(user, chat),
+  busy: (user, chat) => contexts.isActive(user, chat),
+  toast: (user, tone, title, message) => {
+    spindle.toast[tone](message, { title, userId: user });
+  },
+  changed: (user, state) => {
+    spindle.sendToFrontend({ type: "keepWarm", state }, user);
+  }
+});
 agent = new AgentBridge(spindle, guard, health, prompts);
 agent.register();
 function settings(user) {
@@ -4212,12 +4366,21 @@ if (!spindle.host.capabilities["interceptor-context-v1"])
   throw new Error("LumiCache requires a Lumiverse build with bound interceptor context.");
 spindle.on("CHAT_DELETED", (event, user) => {
   const id = event?.id;
-  if (user && typeof id === "string")
+  if (user && typeof id === "string") {
     guard.forget(user, id);
+    autoRefresh.cancel(user, id);
+  }
+});
+spindle.on("MESSAGE_DELETED", (event, user) => {
+  const chat = event?.chatId;
+  if (user && typeof chat === "string")
+    autoRefresh.cancel(user, chat);
 });
 spindle.on("GENERATION_STARTED", (event, user) => {
-  if (user)
+  if (user) {
     contexts.start(user, event);
+    autoRefresh.interrupt(user, event.chatId);
+  }
 });
 spindle.registerInterceptor(async (messages, context) => {
   const raw = context;
@@ -4235,10 +4398,11 @@ spindle.registerInterceptor(async (messages, context) => {
   match: { generationTypes: ["normal", "continue", "regenerate", "swipe"] }
 });
 spindle.on("GENERATION_ENDED", (event, user) => {
-  if (user) {
-    contexts.finish(user, event);
-    guard.finish(user, event.generationId, !event.error, event.messageId);
-  }
+  if (!user)
+    return;
+  contexts.finish(user, event);
+  if (guard.finish(user, event.generationId, !event.error, event.messageId))
+    settings(user).then((config) => autoRefresh.start(user, event.chatId, validateSettings(config)), (error) => console.warn("[LumiCache] Could not start auto-refresh:", error));
 });
 spindle.on("GENERATION_STOPPED", (event, user) => {
   if (user) {
@@ -4286,14 +4450,31 @@ spindle.onFrontendMessage((raw, user, session) => {
           const chatId = input.chatId === undefined ? undefined : text(input.chatId);
           if (chatId)
             guard.resume(user, chatId, session);
-          value = { settings: await settings(user), ...guard.view(user, chatId, session) };
+          value = { settings: await settings(user), keepWarm: autoRefresh.state(user), ...guard.view(user, chatId, session) };
           break;
         }
         case "settings": {
-          const next = validateSettings(input);
+          const before = validateSettings(await settings(user)), next = validateSettings(input);
           await spindle.userStorage.setJson("settings.json", next, { userId: user });
           settingsCache.set(user, Promise.resolve(next));
           value = next;
+          if (before.autoRefreshEnabled !== next.autoRefreshEnabled || before.autoRefreshMinutes !== next.autoRefreshMinutes || before.autoRefreshLimit !== next.autoRefreshLimit)
+            autoRefresh.restart(user, next);
+          spindle.sendToFrontend({ type: "changed" }, user);
+          break;
+        }
+        case "keepWarm": {
+          if (typeof input.enabled !== "boolean")
+            throw new Error("Invalid Keep Cache Warm request.");
+          const chatId = input.chatId === undefined ? undefined : text(input.chatId);
+          const next = { ...validateSettings(await settings(user)), autoRefreshEnabled: input.enabled };
+          await spindle.userStorage.setJson("settings.json", next, { userId: user });
+          settingsCache.set(user, Promise.resolve(next));
+          if (!next.autoRefreshEnabled)
+            autoRefresh.cancel(user);
+          else if (chatId && guard.prompt(user, chatId))
+            autoRefresh.start(user, chatId, next);
+          value = { settings: next, state: autoRefresh.state(user) };
           spindle.sendToFrontend({ type: "changed" }, user);
           break;
         }

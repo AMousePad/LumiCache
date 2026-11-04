@@ -7,6 +7,9 @@ var DEFAULT_SETTINGS = {
   overflowPlacement: "end",
   refreshEnabled: true,
   refreshEvery: 20,
+  autoRefreshEnabled: false,
+  autoRefreshMinutes: 4,
+  autoRefreshLimit: 3,
   hiddenCategories: []
 };
 function errorText(error) {
@@ -21,14 +24,15 @@ function validateSettings(value) {
   const result = { ...DEFAULT_SETTINGS, ...v };
   if (!["pause", "warn", "off"].includes(result.mode))
     throw new Error("Choose Pause, Warn or Off for LumiCache.");
-  for (const [key, max] of [["acceptableDepth", 1e5], ["acceptableTokens", 2000000], ["refreshEvery", 1e5]]) {
+  for (const [key, max] of [["acceptableDepth", 1e5], ["acceptableTokens", 2000000], ["refreshEvery", 1e5], ["autoRefreshMinutes", 1440], ["autoRefreshLimit", 1000]]) {
     const n = result[key];
-    if (key !== "refreshEvery" && n === null)
+    const required = key !== "acceptableDepth" && key !== "acceptableTokens";
+    if (!required && n === null)
       continue;
-    if (typeof n !== "number" || !Number.isInteger(n) || n < (key === "refreshEvery" ? 1 : 0) || n > max)
-      throw new Error(`Invalid ${key}: enter a whole number${key === "refreshEvery" ? " greater than zero" : " or leave the limit blank"}.`);
+    if (typeof n !== "number" || !Number.isInteger(n) || n < (required ? 1 : 0) || n > max)
+      throw new Error(`Invalid ${key}: enter a whole number${required ? " greater than zero" : " or leave the limit blank"}.`);
   }
-  for (const key of ["forceConsistency", "refreshEnabled"])
+  for (const key of ["forceConsistency", "refreshEnabled", "autoRefreshEnabled"])
     if (typeof result[key] !== "boolean")
       throw new Error(`Invalid ${key}.`);
   if (!["end", "boundary"].includes(result.overflowPlacement))
@@ -43,6 +47,9 @@ function validateSettings(value) {
     overflowPlacement: result.overflowPlacement,
     refreshEnabled: result.refreshEnabled,
     refreshEvery: result.refreshEvery,
+    autoRefreshEnabled: result.autoRefreshEnabled,
+    autoRefreshMinutes: result.autoRefreshMinutes,
+    autoRefreshLimit: result.autoRefreshLimit,
     hiddenCategories: [...new Set(result.hiddenCategories)]
   };
 }
@@ -114,12 +121,13 @@ function policySettings(value, busy, save) {
     return row;
   };
   const number = (parent, key, title, placeholder) => {
+    const required = key !== "acceptableDepth" && key !== "acceptableTokens";
     const row = el("label", "lc-setting-row"), input = el("input", "lc-number");
     input.type = "number";
-    input.min = key === "refreshEvery" ? "1" : "0";
-    input.max = key === "acceptableTokens" ? "2000000" : "100000";
+    input.min = required ? "1" : "0";
+    input.max = key === "acceptableTokens" ? "2000000" : key === "autoRefreshMinutes" ? "1440" : key === "autoRefreshLimit" ? "1000" : "100000";
     input.step = "1";
-    input.required = key === "refreshEvery";
+    input.required = required;
     input.value = draft[key] === null ? "" : String(draft[key]);
     input.placeholder = placeholder;
     input.disabled = busy;
@@ -173,6 +181,18 @@ function policySettings(value, busy, save) {
   });
   interval = number(refresh, "refreshEvery", "Successful replies between refreshes", "20");
   interval.hidden = !draft.refreshEnabled;
+  const idle = section("Keep Cache Warm");
+  let idleFields = [];
+  toggle(idle, "autoRefreshEnabled", "Keep Cache Warm", "Resends the chat's last prompt to keep it cached. Each refresh is a billed request.", () => {
+    idleFields.forEach((field) => {
+      field.hidden = !draft.autoRefreshEnabled;
+    });
+  });
+  idleFields = [number(idle, "autoRefreshMinutes", "Minutes between refreshes", "4"), number(idle, "autoRefreshLimit", "Maximum refreshes after each reply", "3"), el("p", "lc-muted", "Starts after each successful reply, in the chat you sent in last. Set the interval shorter than your cache lifetime. It stops if a refresh misses the cache. You can also turn this on or off from the input bar drawer.")];
+  idle.append(idleFields[2]);
+  idleFields.forEach((field) => {
+    field.hidden = !draft.autoRefreshEnabled;
+  });
   const actions = el("div", "lc-settings-actions");
   actions.append(state, apply);
   root.append(actions);
@@ -880,6 +900,15 @@ details[open] > summary > .lc-chevron { transform:rotate(90deg); }
 .lc-sbs-cell.lc-remove { background:color-mix(in srgb,#c85b69 16%,var(--lc-bg)); border-left:0; }
 .lc-sbs-cell.lc-context { border-left:0; }
 .lc-sbs-empty { background:var(--lc-soft); }
+.lc-warm-icon { width:100%; height:100%; transform-origin:center; }
+.lc-root.lc-warm-banner { flex-direction:row; align-items:center; gap:8px; height:auto; min-height:auto; margin:0 0 6px; padding:5px 6px 5px 10px; border:1px solid var(--lc-line); border-radius:10px; background:var(--lc-panel); font-size:12px; container-type:normal; }
+.lc-root.lc-warm-banner[hidden] { display:none; }
+.lc-warm-banner .lc-icon { width:15px; height:15px; color:var(--lc-accent); }
+.lc-warm-text { flex:1; min-width:0; color:var(--lc-muted); }
+.lc-warm-banner .lc-button { min-height:28px; padding:3px 10px; font-size:12px; flex:none; }
+.lc-root.lc-warm-modal { height:auto; gap:10px; padding:4px 2px; background:transparent; }
+.lc-warm-status { display:flex; align-items:center; gap:8px; font-weight:600; }
+.lc-warm-status .lc-icon { color:var(--lc-accent); }
 @keyframes lc-spin { to { transform:rotate(360deg); } }
 @keyframes lc-shimmer { to { background-position:-200% 0; } }
 @container (max-width:340px) { .lc-tab .lc-icon { display:none; } .lc-app-toolbar { padding:10px 8px; gap:4px; } .lc-content { padding:14px 10px 24px; } .lc-tab { font-size:11px; } .lc-group-summary { padding:11px; } }
@@ -2166,6 +2195,154 @@ ${String(message.content)}`).join(`
   }
 }
 
+// src/ui/keep-warm.ts
+function clock(ms) {
+  const seconds = Math.ceil(ms / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+class KeepWarm {
+  ctx;
+  bridge;
+  chat;
+  state = null;
+  settings;
+  received = 0;
+  busy = false;
+  error = "";
+  ticker;
+  removeSpin;
+  modal;
+  modalStatus;
+  action;
+  offClick;
+  banner = el("div", "lc-root lc-warm-banner");
+  bannerText = el("span", "lc-warm-text");
+  bannerStop = button("Stop", () => {
+    this.toggle(false);
+  });
+  constructor(ctx, bridge, chat) {
+    this.ctx = ctx;
+    this.bridge = bridge;
+    this.chat = chat;
+    this.action = ctx.ui.registerInputBarAction({ id: "lumicache_keep_warm", label: "Keep Cache Warm", subtitle: "Off", iconSvg: icon("refresh", "lc-warm-icon").outerHTML });
+    this.offClick = this.action.onClick(() => this.open());
+    this.bannerStop.setAttribute("aria-label", "Stop keeping cache warm");
+    this.banner.hidden = true;
+    this.banner.append(icon("refresh", "lc-spin"), this.bannerText, this.bannerStop);
+    ctx.ui.mount("chat_composer_above").append(this.banner);
+  }
+  update(settings, state) {
+    this.settings = validateSettings(settings);
+    this.setState(state);
+  }
+  setState(state) {
+    this.state = state;
+    this.received = Date.now();
+    this.render();
+  }
+  dispose() {
+    clearInterval(this.ticker);
+    this.removeSpin?.();
+    this.modal?.dismiss();
+    this.offClick();
+    this.action.destroy();
+    this.banner.remove();
+  }
+  blocked() {
+    return this.settings?.mode === "off";
+  }
+  status() {
+    if (this.error)
+      return this.error;
+    const job = this.state;
+    if (!job) {
+      if (!this.settings?.autoRefreshEnabled)
+        return "Off";
+      return this.blocked() ? "On, but cache monitoring is off, so there is no prompt to resend" : "On. Starts after your next reply";
+    }
+    const where = job.chatId === this.chat() ? "Keeping cache warm" : "Keeping another chat's cache warm";
+    const left = job.nextIn === null ? null : Math.max(0, job.nextIn - (Date.now() - this.received));
+    return `${where} · ${left === null ? "refreshing now" : `next in ${clock(left)}`} · ${job.done} of ${job.limit} used`;
+  }
+  tick() {
+    const text = this.status();
+    this.bannerText.textContent = text;
+    if (this.modalStatus)
+      this.modalStatus.textContent = text;
+  }
+  render() {
+    const running = !!this.state, enabled = !!this.settings?.autoRefreshEnabled;
+    this.action.setSubtitle(running ? "On" : enabled ? "On, waiting for a reply" : "Off");
+    if (running && !this.removeSpin)
+      this.removeSpin = this.ctx.dom.addStyle("@media(prefers-reduced-motion:no-preference) { .lc-warm-icon { animation:lc-spin 1.5s linear infinite; } }");
+    if (!running) {
+      this.removeSpin?.();
+      this.removeSpin = undefined;
+    }
+    this.banner.hidden = !running;
+    this.bannerStop.disabled = this.busy;
+    clearInterval(this.ticker);
+    this.ticker = undefined;
+    if (this.state?.nextIn !== null && this.state)
+      this.ticker = setInterval(() => this.tick(), 1000);
+    this.tick();
+    this.renderModal();
+  }
+  open() {
+    if (this.modal)
+      return;
+    const modal = this.modal = this.ctx.ui.showModal({ title: "Keep Cache Warm", width: 400 });
+    modal.onDismiss(() => {
+      if (this.modal === modal) {
+        this.modal = undefined;
+        this.modalStatus = undefined;
+      }
+    });
+    this.renderModal();
+  }
+  renderModal() {
+    if (!this.modal)
+      return;
+    const settings = this.settings, on = !!settings?.autoRefreshEnabled, body = el("div", "lc-root lc-warm-modal");
+    const status = el("div", "lc-warm-status"), text = el("span");
+    if (this.state)
+      status.append(icon("refresh", "lc-spin"));
+    status.append(text);
+    this.modalStatus = text;
+    body.append(status);
+    const every = settings?.autoRefreshMinutes ?? 4, limit = settings?.autoRefreshLimit ?? 3;
+    body.append(el("p", "lc-muted", `Resends the chat's last prompt every ${every} minute${every === 1 ? "" : "s"}, up to ${limit} time${limit === 1 ? "" : "s"} after each reply, so the cache is still there when you come back. Each refresh is a billed request. Change the timing in LumiCache settings.`));
+    const control = on ? button("Turn off", () => {
+      this.toggle(false);
+    }) : button("Keep cache warm", () => {
+      this.toggle(true);
+    }, "lc-primary");
+    control.disabled = this.busy || !settings || !on && this.blocked();
+    body.append(control);
+    this.modal.root.replaceChildren(body);
+    this.tick();
+  }
+  async toggle(enabled) {
+    if (this.busy)
+      return;
+    this.busy = true;
+    this.error = "";
+    this.render();
+    try {
+      const chatId = this.chat(), result = await this.bridge.call("keepWarm", { enabled, ...chatId ? { chatId } : {} });
+      this.settings = validateSettings(result.settings);
+      this.state = result.state;
+      this.received = Date.now();
+    } catch (cause) {
+      this.error = errorText(cause);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+}
+
 // src/frontend.ts
 function setup(ctx) {
   const removeStyle = ctx.dom.addStyle(STYLES), bridge = new Bridge(ctx);
@@ -2185,6 +2362,7 @@ function setup(ctx) {
   root.append(toolbar, settingsPanel, error, content);
   tab.root.append(root);
   const chat = () => ctx.state.get("chat.active").chatId;
+  const warm = new KeepWarm(ctx, bridge, chat);
   let view = null, disposed = false, revision = 0, busy = false, settingsOpen = false;
   let policyPanel, policyPanelKey = "";
   let selected = "health";
@@ -2409,6 +2587,7 @@ function setup(ctx) {
       if (disposed || current !== revision || chatId !== chat())
         return;
       view = next;
+      warm.update(next.settings, next.keepWarm ?? null);
       error.textContent = "";
       render();
     } catch (cause) {
@@ -2474,6 +2653,8 @@ function setup(ctx) {
   const unsubs = [
     ctx.onBackendMessage((raw) => {
       const event = raw;
+      if (event?.type === "keepWarm")
+        warm.setState(event.state ?? null);
       if (event?.type === "changed" && (!event.chatId || event.chatId === chat()))
         load();
     }),
@@ -2516,6 +2697,7 @@ function setup(ctx) {
       off();
     closeModal();
     health.dispose();
+    warm.dispose();
     bridge.dispose();
     tab.destroy();
     removeStyle();

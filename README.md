@@ -40,6 +40,8 @@ To configure acceptable cache breaking, open the settings, edit your policy, the
 
 - *"Allow scheduled cache breaks"* is an optional toggle for the above setting. After *"Y successful model replies"* (default 20), the next request is allowed to break cache and update the prefix. Reccomended to enable this if you are using the above option.
 
+*"Keep Cache Warm"* is optional and off by default. Turn it on or off from the input bar drawer or in settings. After a successful reply, it resends that chat's last prompt with minimal output every X minutes, up to Y times, so the cache is still there when you come back. **Each refresh is a billed request.** While it runs, a banner above the input shows a spinner, the time to the next refresh, and a Stop button that turns it off. Set the interval shorter than your cache lifetime. Only the chat you sent in last is refreshed, and a new reply starts the count over. It stops by itself if a refresh misses the cache or fails, and it can't repeat native tools, so a chat that sends tools will usually stop after the first refresh.
+
 ## Cache health
 
 Shows items that might warrant some investigation! This is not an exhaustive list, but should help to get you started on the basic issues! Go to the next section after this one for simulations to catch the rest.
@@ -79,6 +81,12 @@ This lets you know what ACTUALLY broke between turns! This is to catch anything 
 ## LumiAgent Integration
 
 LumiAgent knows how this works, how cache works, how the tabs work, and can help you edit your Lumiverse Presets/Lorebooks/Characters to fix your cache woes. It can also see and call the same things you can for LumiCache!
+
+## Gemini Nano Banana's Interpretation of LumiCache
+
+I thought this was funny, but also kind of fire:
+
+![Nano Banana's humourus interpretation](image/README/nano_banana.jpeg)
 
 ## License
 

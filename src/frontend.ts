@@ -1,5 +1,5 @@
 import type { SpindleFrontendContext, SpindleModalHandle } from "lumiverse-spindle-types";
-import { errorText, type Check, type View, type Settings } from "./shared";
+import { errorText, type Check, type KeepWarmState, type View, type Settings } from "./shared";
 import { validateSettings } from "./settings";
 import { policySettings } from "./ui/settings";
 import { Bridge } from "./ui/bridge";
@@ -9,6 +9,7 @@ import { ICON, STYLES } from "./ui/styles";
 import { closeTurnModal, HealthPanel, openTurnModal } from "./ui/health";
 import { renderTimeline, type TimelineView } from "./ui/timeline";
 import { icon } from "./ui/icons";
+import { KeepWarm } from "./ui/keep-warm";
 
 export function setup(ctx: SpindleFrontendContext): () => void {
   const removeStyle = ctx.dom.addStyle(STYLES), bridge = new Bridge(ctx);
@@ -19,6 +20,7 @@ export function setup(ctx: SpindleFrontendContext): () => void {
   const settingsPanel = el("div", "lc-settings"), content = el("div", "lc-content"), error = el("p", "lc-error lc-app-error"); error.setAttribute("role", "alert");
   root.append(toolbar, settingsPanel, error, content); tab.root.append(root);
   const chat = () => ctx.state!.get<{ chatId: string | null }>("chat.active").chatId;
+  const warm = new KeepWarm(ctx, bridge, chat);
   let view: View | null = null, disposed = false, revision = 0, busy = false, settingsOpen = false;
   let policyPanel: ReturnType<typeof policySettings> | undefined, policyPanelKey = "";
   let selected: "health" | "simulation" | "check" = "health";
@@ -139,7 +141,7 @@ export function setup(ctx: SpindleFrontendContext): () => void {
   }
   async function load() {
     const current = ++revision, chatId = chat();
-    try { const next = await bridge.call("load", chatId ? { chatId } : {}); if (disposed || current !== revision || chatId !== chat()) return; view = next; error.textContent = ""; render(); }
+    try { const next = await bridge.call("load", chatId ? { chatId } : {}); if (disposed || current !== revision || chatId !== chat()) return; view = next; warm.update(next.settings, next.keepWarm ?? null); error.textContent = ""; render(); }
     catch (cause) { if (!disposed && current === revision) { error.textContent = errorText(cause); render(); } }
   }
   async function decide(id: string, allow: boolean) {
@@ -164,7 +166,9 @@ export function setup(ctx: SpindleFrontendContext): () => void {
     finally { busy = false; await load(); }
   }
   const unsubs = [
-    ctx.onBackendMessage(raw => { const event = raw as { type?: string; chatId?: string }; if (event?.type === "changed" && (!event.chatId || event.chatId === chat())) void load(); }),
+    ctx.onBackendMessage(raw => { const event = raw as { type?: string; chatId?: string; state?: KeepWarmState | null };
+      if (event?.type === "keepWarm") warm.setState(event.state ?? null);
+      if (event?.type === "changed" && (!event.chatId || event.chatId === chat())) void load(); }),
     ctx.state!.subscribe("chat.active", () => { closeModal(); view = null; render(); void load(); }),
     ctx.events.on("CONNECTED", () => { void load(); }),
     ctx.events.on("__ws_close", () => { error.textContent = "Connection lost. Paused sends remain blocked."; render(); }),
@@ -175,5 +179,5 @@ export function setup(ctx: SpindleFrontendContext): () => void {
     void bridge.call("agentPresence", { ...(chatId ? { chatId } : {}), ...(connectionId ? { connectionId } : {}) }).catch(() => {});
   };
   const presenceTimer = setInterval(presence, 20_000); presence(); render(); void load(); health.start();
-  return () => { closeTurnModal(); for (const { view } of inspectors.values()) view.dispose(); clearInterval(presenceTimer); void bridge.call("agentPresence", { offline: true }).catch(() => {}); disposed = true; revision++; for (const off of unsubs) off(); closeModal(); health.dispose(); bridge.dispose(); tab.destroy(); removeStyle(); };
+  return () => { closeTurnModal(); for (const { view } of inspectors.values()) view.dispose(); clearInterval(presenceTimer); void bridge.call("agentPresence", { offline: true }).catch(() => {}); disposed = true; revision++; for (const off of unsubs) off(); closeModal(); health.dispose(); warm.dispose(); bridge.dispose(); tab.destroy(); removeStyle(); };
 }

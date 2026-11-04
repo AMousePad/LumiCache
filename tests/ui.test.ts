@@ -41,6 +41,7 @@ function fixture(initial: View) {
   const lazy = localClient();
   let view = initial, chatId: string | null = "chat", modal: HTMLElement | null = null, dismiss: (() => void) | undefined;
   const root = document.createElement("div"); document.body.append(root);
+  const composer = document.createElement("div"); let subtitle = "", openWarm = () => {};
   const listeners = new Set<(raw: unknown) => void>(), chatListeners = new Set<() => void>();
   const events = new Map<string, () => void>(), requests: { operation: string; input: any }[] = [];
   let activations = 0;
@@ -48,6 +49,8 @@ function fixture(initial: View) {
   const ctx = {
     dom: { addStyle: () => () => {} },
     ui: {
+      mount: () => composer,
+      registerInputBarAction: () => ({ setSubtitle: (text: string) => { subtitle = text; }, onClick: (fn: () => void) => { openWarm = fn; return () => {}; }, destroy: () => {} }),
       registerDrawerTab: () => ({ root, setBadge: () => {}, activate: () => { activations++; }, onActivate: () => () => {}, destroy: () => root.remove() }),
       showModal: () => {
         const current = document.createElement("div"); document.body.append(current); modal = current;
@@ -65,19 +68,48 @@ function fixture(initial: View) {
         else if (request.operation.startsWith("diff")) value = await lazy.call(request.operation as never, request.input as never);
         else if (request.operation === "decide") { view = { ...view, check: { ...view.check!, status: request.input.allow ? "allowed" : "cancelled" }, canDecide: false }; }
         else if (request.operation === "settings") { view = { ...view, settings: request.input }; value = request.input; }
+        else if (request.operation === "keepWarm") { view = { ...view, settings: { ...view.settings, autoRefreshEnabled: request.input.enabled } }; value = { settings: view.settings, state: request.input.enabled ? { chatId: "chat", done: 0, limit: 3, nextIn: 240_000 } : null }; }
         else if (request.operation === "clear") view = { ...view, check: null, hasBaseline: false };
         emit({ type: "reply", id: request.id, value });
       });
     },
   } as unknown as SpindleFrontendContext;
   const dispose = setup(ctx);
-  return { root, requests, dispose, modal: () => modal, dismiss: () => dismiss?.(), activations: () => activations,
+  return { root, requests, dispose, modal: () => modal, dismiss: () => dismiss?.(), activations: () => activations, composer, subtitle: () => subtitle, openWarm: () => openWarm(), emit,
     update(next: View, eventChat = "chat") { view = next; emit({ type: "changed", chatId: eventChat }); },
     switchChat(next: string) { chatId = next; for (const fn of chatListeners) fn(); }, events };
 }
 function click(root: Element, label: string) {
   const node = Array.from(root.querySelectorAll("button")).find(b => b.textContent === label); expect(node).toBeDefined(); node!.click();
 }
+describe("Keep Cache Warm", () => {
+  test("the drawer item turns it on and off, and the banner shows and stops a running job", async () => {
+    const ui = fixture({ settings: { mode: "warn" }, check: null, hasBaseline: true, canDecide: false }); await flush();
+    const banner = ui.composer.querySelector<HTMLElement>(".lc-warm-banner")!;
+    expect(banner.hidden).toBe(true); expect(ui.subtitle()).toBe("Off");
+    ui.openWarm(); expect(ui.modal()!.textContent).toContain("Off");
+    click(ui.modal()!, "Keep cache warm"); await flush();
+    expect(ui.requests.at(-1)).toMatchObject({ operation: "keepWarm", input: { enabled: true, chatId: "chat" } });
+    expect(banner.hidden).toBe(false); expect(ui.subtitle()).toBe("On");
+    expect(banner.textContent).toContain("Keeping cache warm"); expect(banner.textContent).toContain("next in 4:00"); expect(banner.textContent).toContain("0 of 3 used");
+    ui.emit({ type: "keepWarm", state: { chatId: "other", done: 1, limit: 3, nextIn: null } });
+    expect(banner.textContent).toContain("another chat"); expect(banner.textContent).toContain("refreshing now");
+    click(banner, "Stop"); await flush();
+    expect(ui.requests.at(-1)).toMatchObject({ operation: "keepWarm", input: { enabled: false } });
+    expect(banner.hidden).toBe(true); expect(ui.subtitle()).toBe("Off");
+    ui.dismiss(); ui.dispose();
+  });
+  test("can't be started with monitoring off, and on with no job says it is waiting", async () => {
+    const off = fixture({ settings: { mode: "off" }, check: null, hasBaseline: false, canDecide: false }); await flush();
+    off.openWarm();
+    expect(Array.from(off.modal()!.querySelectorAll("button")).find(b => b.textContent === "Keep cache warm")!.disabled).toBe(true);
+    off.dismiss(); off.dispose();
+    const idle = fixture({ settings: { mode: "warn", autoRefreshEnabled: true }, check: null, hasBaseline: true, canDecide: false }); await flush();
+    expect(idle.subtitle()).toBe("On, waiting for a reply");
+    idle.openWarm(); expect(idle.modal()!.textContent).toContain("Starts after your next reply");
+    idle.dismiss(); idle.dispose();
+  });
+});
 describe("review UI", () => {
   test("Health is the default tab; keyboard navigation selects separate Simulation and Cache Diff panels", async () => {
     const ui = fixture({ settings: { mode: "pause" }, check: null, hasBaseline: false, canDecide: false }); await flush();

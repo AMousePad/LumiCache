@@ -9,6 +9,10 @@ export interface Settings {
   overflowPlacement?: "end" | "boundary";
   refreshEnabled?: boolean;
   refreshEvery?: number;
+  /** Replays the last prompt while a chat is idle. Each replay is billed, so it stays off until asked for. */
+  autoRefreshEnabled?: boolean;
+  autoRefreshMinutes?: number;
+  autoRefreshLimit?: number;
   hiddenCategories?: Classification[];
 }
 export interface InspectionContext {
@@ -21,7 +25,7 @@ export interface InspectionContext {
   label?: string;
 }
 export const DEFAULT_SETTINGS: Required<Settings> = { mode: "warn", acceptableDepth: 5, acceptableTokens: null,
-  forceConsistency: false, overflowPlacement: "end", refreshEnabled: true, refreshEvery: 20, hiddenCategories: [] };
+  forceConsistency: false, overflowPlacement: "end", refreshEnabled: true, refreshEvery: 20, autoRefreshEnabled: false, autoRefreshMinutes: 4, autoRefreshLimit: 3, hiddenCategories: [] };
 export interface PromptMessage { role: string; header: string; body: string }
 export interface Snapshot {
   /** Frontend views carry a session-bound reference instead of message bodies. */
@@ -54,7 +58,9 @@ export interface Check {
   timeline?: StepTimeline;
   policy?: { action: "tolerated" | "preserved" | "refresh" | "seed"; restored: number; relocated: number; replies: number; approximate: boolean; accepted?: boolean };
 }
-export interface View { settings: Settings; check: Check | null; hasBaseline: boolean; canDecide: boolean }
+/** A running Keep Cache Warm job. nextIn is null while a refresh is being sent. */
+export interface KeepWarmState { chatId: string; done: number; limit: number; nextIn: number | null }
+export interface View { settings: Settings; check: Check | null; hasBaseline: boolean; canDecide: boolean; keepWarm?: KeepWarmState | null }
 export interface Operations {
   agentPresence: { input: { chatId?: string; connectionId?: string; offline?: boolean }; output: void };
   agentClaim: { input: { id: string }; output: { kind: "audit" | "simulation"; input: import("./health/types").AuditInput } };
@@ -64,6 +70,7 @@ export interface Operations {
   diffPage: { input: { id: string; cursor?: number; fold?: number }; output: import("./diff-engine").DiffPage };
   load: { input: { chatId?: string }; output: View };
   settings: { input: Settings; output: Settings };
+  keepWarm: { input: { enabled: boolean; chatId?: string }; output: { settings: Settings; state: KeepWarmState | null } };
   decide: { input: { id: string; allow: boolean }; output: void };
   clear: { input: { chatId: string }; output: void };
   audit: { input: import("./health/types").AuditInput & { agentJobId?: string }; output: import("./health/types").HealthReport };

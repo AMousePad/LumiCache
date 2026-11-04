@@ -6,7 +6,7 @@ import type { Check, InspectionContext, Settings, Snapshot } from "./shared";
 import { validateSettings } from "./settings";
 import { historyUnchanged, preserve, retain, tailStart, type TokenCounter } from "./consistency";
 
-interface ChatState { restored?: boolean; baseline: Snapshot | null; check: Check | null; busy: boolean; retained?: ReturnType<typeof retain>; candidate?: ReturnType<typeof retain>; replies: number; epoch?: string | null }
+interface ChatState { restored?: boolean; baseline: Snapshot | null; check: Check | null; busy: boolean; retained?: ReturnType<typeof retain>; candidate?: ReturnType<typeof retain>; replies: number; epoch?: string | null; connection?: string }
 interface Pending {
   userId: string; session?: string; check: Check;
   settle(allow: boolean, reason?: string): void;
@@ -14,7 +14,7 @@ interface Pending {
 export class Guard {
   private chats = new Map<string, ChatState>();
   private pending = new Map<string, Pending>();
-  private candidates = new Map<string, { key: string; userId: string; check: Check; retained: ReturnType<typeof retain>; refresh: boolean; epoch: string | null }>();
+  private candidates = new Map<string, { key: string; userId: string; check: Check; retained: ReturnType<typeof retain>; refresh: boolean; epoch: string | null; connection?: string }>();
   constructor(private onChange: (user: string, chatId: string, session?: string) => void, private countTokens?: TokenCounter,
     private store?: BaselinePersistence, private toast?: (user: string, tone: "warning" | "success", title: string, message: string) => void) {}
   /** Runs beside the send, since a slow token count should not delay it. */
@@ -190,7 +190,7 @@ export class Guard {
       if (alarming && settings.mode === "warn") void this.toastBreak(messages, check, context, "warning", depth => `Cache has been broken at depth ${depth}!`, tokens => `${tokens} tokens will be recached 💸.`);
       // LumiBooks already toasted when it finished, so this reports what that costs on the first send to see it.
       else if (planned && check.comparison.kind === "break" && !routeChanged) void this.toastBreak(messages, check, context, "success", () => "LumiBooks Compaction Successful.", tokens => `Gracefully re-caching ${tokens} tokens 💖.`);
-      this.candidates.set(this.key(context.userId, context.generationId), { key: this.key(context.userId, context.chatId, context.scope), userId: context.userId, check, retained, refresh, epoch });
+      this.candidates.set(this.key(context.userId, context.generationId), { key: this.key(context.userId, context.chatId, context.scope), userId: context.userId, check, retained, refresh, epoch, connection: context.mainDispatch.descriptor?.connectionId });
       this.notify(context.userId, context.chatId, context.frontendSessionId);
       return messages;
     } catch (error) {
@@ -200,18 +200,25 @@ export class Guard {
       throw error;
     }
   }
-  finish(user: string, generation: string, success: boolean, replyId?: string) {
+  /** The prompt the chat's last successful native send used, for replaying it unchanged. */
+  prompt(user: string, chat: string) {
+    const state = this.chats.get(this.key(user, chat));
+    return state?.baseline && state.retained && state.connection ? { messages: state.retained.messages, connectionId: state.connection, model: state.baseline.model } : null;
+  }
+  /** Returns whether this send became the new baseline. */
+  finish(user: string, generation: string, success: boolean, replyId?: string): boolean {
     const key = this.key(user, generation), candidate = this.candidates.get(key);
-    if (!candidate) return;
+    if (!candidate) return false;
     this.candidates.delete(key);
     const state = this.chats.get(candidate.key);
-    if (!state || state.check !== candidate.check) return;
+    if (!state || state.check !== candidate.check) return false;
     state.busy = false; candidate.check.status = success ? "completed" : "failed";
     state.candidate = undefined;
-    if (success) { state.baseline = candidate.check.after; state.retained = candidate.retained; state.replies = candidate.refresh ? 1 : state.replies + 1; state.epoch = candidate.epoch;
+    if (success) { state.baseline = candidate.check.after; state.retained = candidate.retained; state.replies = candidate.refresh ? 1 : state.replies + 1; state.epoch = candidate.epoch; state.connection = candidate.connection;
       const [, chat, scope] = JSON.parse(candidate.key) as string[], after = candidate.check.after;
       this.store?.save(user, chat, scope, { at: after.at, route: after.route, model: after.model, messages: candidate.retained.messages, replies: state.replies, epoch: state.epoch }, replyId);
     }
     this.notify(user, candidate.check.chatId);
+    return success;
   }
 }

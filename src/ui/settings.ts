@@ -15,13 +15,13 @@ export function policySettings(value: Settings, busy: boolean, save: (patch: Par
     for(const [value,label] of options){const option=el("option","",label);option.value=value;input.append(option);}input.value=draft[key];
     input.addEventListener("change",()=>{Object.assign(draft,{[key]:input.value});update();});row.append(el("span","",title),input);parent.append(row);return row;
   };
-  const number=(parent:HTMLElement,key:"acceptableDepth"|"acceptableTokens"|"refreshEvery",title:string,placeholder:string)=>{
-    const row=el("label","lc-setting-row"), input=el("input","lc-number");input.type="number";input.min=key==="refreshEvery"?"1":"0";input.max=key==="acceptableTokens"?"2000000":"100000";input.step="1";input.required=key==="refreshEvery";
+  const number=(parent:HTMLElement,key:"acceptableDepth"|"acceptableTokens"|"refreshEvery"|"autoRefreshMinutes"|"autoRefreshLimit",title:string,placeholder:string)=>{const required=key!=="acceptableDepth"&&key!=="acceptableTokens";
+    const row=el("label","lc-setting-row"), input=el("input","lc-number");input.type="number";input.min=required?"1":"0";input.max=key==="acceptableTokens"?"2000000":key==="autoRefreshMinutes"?"1440":key==="autoRefreshLimit"?"1000":"100000";input.step="1";input.required=required;
     input.value=draft[key]===null?"":String(draft[key]);input.placeholder=placeholder;input.disabled=busy;input.dataset.setting=key;input.setAttribute("aria-label",title);fields.push(input);
     const changed=()=>{Object.assign(draft,{[key]:input.value===""?null:Number(input.value)});update();};input.addEventListener("input",changed);input.addEventListener("change",changed);
     row.append(el("span","",title),input);parent.append(row);return row;
   };
-  const toggle=(parent:HTMLElement,key:"forceConsistency"|"refreshEnabled",title:string,subtitle:string,changed:()=>void)=>{
+  const toggle=(parent:HTMLElement,key:"forceConsistency"|"refreshEnabled"|"autoRefreshEnabled",title:string,subtitle:string,changed:()=>void)=>{
     const label=el("label","lc-setting-row lc-switch-row"), copy=el("span","lc-setting-copy"), input=el("input","lc-switch");
     input.type="checkbox";input.checked=draft[key];input.disabled=busy;input.setAttribute("role","switch");input.setAttribute("aria-label",title);input.dataset.setting=key;
     input.addEventListener("change",()=>{draft[key]=input.checked;changed();update();});copy.append(el("strong","",title),el("small","lc-muted",subtitle));label.append(copy,input);parent.append(label);
@@ -34,6 +34,10 @@ export function policySettings(value: Settings, busy: boolean, save: (patch: Par
   refresh=section("Periodic refresh");refresh.hidden=!draft.forceConsistency;let interval:HTMLElement;
   toggle(refresh,"refreshEnabled","Allow scheduled cache breaks","Apply current prompt changes after a set number of replies.",()=>{interval.hidden=!draft.refreshEnabled;});
   interval=number(refresh,"refreshEvery","Successful replies between refreshes","20");interval.hidden=!draft.refreshEnabled;
+  const idle=section("Keep Cache Warm");let idleFields:HTMLElement[]=[];
+  toggle(idle,"autoRefreshEnabled","Keep Cache Warm","Resends the chat's last prompt to keep it cached. Each refresh is a billed request.",()=>{idleFields.forEach(field=>{field.hidden=!draft.autoRefreshEnabled;});});
+  idleFields=[number(idle,"autoRefreshMinutes","Minutes between refreshes","4"),number(idle,"autoRefreshLimit","Maximum refreshes after each reply","3"),el("p","lc-muted","Starts after each successful reply, in the chat you sent in last. Set the interval shorter than your cache lifetime. It stops if a refresh misses the cache. You can also turn this on or off from the input bar drawer.")];
+  idle.append(idleFields[2]!);idleFields.forEach(field=>{field.hidden=!draft.autoRefreshEnabled;});
   const actions=el("div","lc-settings-actions");actions.append(state,apply);root.append(actions);update();
   return Object.assign(root,{setBusy(value:boolean){busy=value;root.querySelectorAll<HTMLInputElement|HTMLSelectElement>("input,select").forEach(input=>{input.disabled=value;});update();}});
 }

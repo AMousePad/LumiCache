@@ -7,6 +7,7 @@ import { HealthService } from "./health/service";
 import { compositionSnapshot } from "./health/composition";
 
 import { AgentBridge } from "./agent-bridge";
+import { AutoRefresh } from "./auto-refresh";
 import { CatBridge } from "./cat-bridge";
 import { PromptStore } from "./prompt-store";
 import { validateSettings } from "./settings";
@@ -23,6 +24,9 @@ const health = new HealthService(spindle, (user, chat) => contexts.isActive(user
     agent?.progress(user, session, completed, name);
     spindle.sendToFrontend({ type: "simulationProgress", completed, name }, user, { frontendSessionId: session });
   }, settings);
+const autoRefresh = new AutoRefresh({ generate: spindle.generate, prompt: (user, chat) => guard.prompt(user, chat), busy: (user, chat) => contexts.isActive(user, chat),
+  toast: (user, tone, title, message) => { spindle.toast[tone](message, { title, userId: user }); },
+  changed: (user, state) => { spindle.sendToFrontend({ type: "keepWarm", state }, user); } });
 agent = new AgentBridge(spindle, guard, health, prompts);
 agent.register();
 function settings(user: string): Promise<Settings> {
@@ -53,9 +57,14 @@ new CatBridge(spindle, guard, settings, plannedBreakEpoch).register();
 if (!spindle.host.capabilities["interceptor-context-v1"]) throw new Error("LumiCache requires a Lumiverse build with bound interceptor context.");
 spindle.on("CHAT_DELETED", (event, user) => {
   const id = (event as { id?: unknown } | null)?.id;
-  if (user && typeof id === "string") guard.forget(user, id);
+  if (user && typeof id === "string") { guard.forget(user, id); autoRefresh.cancel(user, id); }
 });
-spindle.on("GENERATION_STARTED", (event, user) => { if (user) contexts.start(user, event); });
+// The saved prompt may hold what was just deleted, so it must not be sent again.
+spindle.on("MESSAGE_DELETED", (event, user) => {
+  const chat = (event as { chatId?: unknown } | null)?.chatId;
+  if (user && typeof chat === "string") autoRefresh.cancel(user, chat);
+});
+spindle.on("GENERATION_STARTED", (event, user) => { if (user) { contexts.start(user, event); autoRefresh.interrupt(user, event.chatId); } });
 spindle.registerInterceptor(async (messages, context) => {
   const raw = context as HostContext;
   if (raw.isDryRun || raw.dryRun) return messages;
@@ -66,7 +75,10 @@ spindle.registerInterceptor(async (messages, context) => {
   priority: 2_000_000_000, required: true,
   match: { generationTypes: ["normal", "continue", "regenerate", "swipe"] },
 });
-spindle.on("GENERATION_ENDED", (event, user) => { if (user) { contexts.finish(user, event); guard.finish(user, event.generationId, !event.error, event.messageId); } });
+spindle.on("GENERATION_ENDED", (event, user) => { if (!user) return;
+  contexts.finish(user, event);
+  if (guard.finish(user, event.generationId, !event.error, event.messageId)) void settings(user).then(config => autoRefresh.start(user, event.chatId, validateSettings(config)), error => console.warn("[LumiCache] Could not start auto-refresh:", error));
+});
 spindle.on("GENERATION_STOPPED", (event, user) => { if (user) { contexts.finish(user, event); guard.finish(user, event.generationId, false); } });
 spindle.on("FRONTEND_SESSION_CLOSED", (event, user) => {
   const session = (event as { frontendSessionId?: unknown } | null)?.frontendSessionId;
@@ -91,12 +103,25 @@ spindle.onFrontendMessage((raw, user, session) => {
         case "load": {
           const chatId = input.chatId === undefined ? undefined : text(input.chatId);
           if (chatId) guard.resume(user, chatId, session);
-          value = { settings: await settings(user), ...guard.view(user, chatId, session) }; break;
+          value = { settings: await settings(user), keepWarm: autoRefresh.state(user), ...guard.view(user, chatId, session) }; break;
         }
         case "settings": {
-          const next = validateSettings(input);
+          const before = validateSettings(await settings(user)), next = validateSettings(input);
           await spindle.userStorage.setJson("settings.json", next, { userId: user });
           settingsCache.set(user, Promise.resolve(next)); value = next;
+          // Health filters save through here too, and must not reset a running job.
+          if (before.autoRefreshEnabled !== next.autoRefreshEnabled || before.autoRefreshMinutes !== next.autoRefreshMinutes || before.autoRefreshLimit !== next.autoRefreshLimit) autoRefresh.restart(user, next);
+          spindle.sendToFrontend({ type: "changed" }, user); break;
+        }
+        case "keepWarm": {
+          if (typeof input.enabled !== "boolean") throw new Error("Invalid Keep Cache Warm request.");
+          const chatId = input.chatId === undefined ? undefined : text(input.chatId);
+          const next = { ...validateSettings(await settings(user)), autoRefreshEnabled: input.enabled };
+          await spindle.userStorage.setJson("settings.json", next, { userId: user });
+          settingsCache.set(user, Promise.resolve(next));
+          if (!next.autoRefreshEnabled) autoRefresh.cancel(user);
+          else if (chatId && guard.prompt(user, chatId)) autoRefresh.start(user, chatId, next);
+          value = { settings: next, state: autoRefresh.state(user) };
           spindle.sendToFrontend({ type: "changed" }, user); break;
         }
         case "decide":
