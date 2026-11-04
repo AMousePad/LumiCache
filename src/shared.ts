@@ -25,7 +25,7 @@ export interface InspectionContext {
   label?: string;
 }
 export const DEFAULT_SETTINGS: Required<Settings> = { mode: "warn", acceptableDepth: 5, acceptableTokens: null,
-  forceConsistency: false, overflowPlacement: "end", refreshEnabled: true, refreshEvery: 20, autoRefreshEnabled: false, autoRefreshMinutes: 4, autoRefreshLimit: 3, hiddenCategories: [] };
+  forceConsistency: false, overflowPlacement: "end", refreshEnabled: true, refreshEvery: 20, autoRefreshEnabled: false, autoRefreshMinutes: 10, autoRefreshLimit: 3, hiddenCategories: [] };
 export interface PromptMessage { role: string; header: string; body: string }
 export interface Snapshot {
   /** Frontend views carry a session-bound reference instead of message bodies. */

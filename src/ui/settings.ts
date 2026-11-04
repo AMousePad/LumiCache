@@ -36,7 +36,7 @@ export function policySettings(value: Settings, busy: boolean, save: (patch: Par
   interval=number(refresh,"refreshEvery","Successful replies between refreshes","20");interval.hidden=!draft.refreshEnabled;
   const idle=section("Keep Cache Warm");let idleFields:HTMLElement[]=[];
   toggle(idle,"autoRefreshEnabled","Keep Cache Warm","Resends the chat's last prompt to keep it cached. Each refresh is a billed request.",()=>{idleFields.forEach(field=>{field.hidden=!draft.autoRefreshEnabled;});});
-  idleFields=[number(idle,"autoRefreshMinutes","Minutes between refreshes","4"),number(idle,"autoRefreshLimit","Maximum refreshes after each reply","3"),el("p","lc-muted","Starts after each successful reply, in the chat you sent in last. Set the interval shorter than your cache lifetime. It stops if a refresh misses the cache. You can also turn this on or off from the input bar drawer.")];
+  idleFields=[number(idle,"autoRefreshMinutes","Minutes between refreshes","10"),number(idle,"autoRefreshLimit","Maximum refreshes after each reply","3"),el("p","lc-muted","Starts after each successful reply, in the chat you sent in last. Set the interval shorter than your cache lifetime. It stops if a refresh misses the cache. You can also turn this on or off from the input bar drawer.")];
   idle.append(idleFields[2]!);idleFields.forEach(field=>{field.hidden=!draft.autoRefreshEnabled;});
   const actions=el("div","lc-settings-actions");actions.append(state,apply);root.append(actions);update();
   return Object.assign(root,{setBusy(value:boolean){busy=value;root.querySelectorAll<HTMLInputElement|HTMLSelectElement>("input,select").forEach(input=>{input.disabled=value;});update();}});

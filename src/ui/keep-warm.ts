@@ -80,8 +80,8 @@ export class KeepWarm {
     const status = el("div", "lc-warm-status"), text = el("span");
     if (this.state) status.append(icon("refresh", "lc-spin"));
     status.append(text); this.modalStatus = text; body.append(status);
-    const every = settings?.autoRefreshMinutes ?? 4, limit = settings?.autoRefreshLimit ?? 3;
-    body.append(el("p", "lc-muted", `Resends the chat's last prompt every ${every} minute${every === 1 ? "" : "s"}, up to ${limit} time${limit === 1 ? "" : "s"} after each reply, so the cache is still there when you come back. Each refresh is a billed request. Change the timing in LumiCache settings.`));
+    const every = settings?.autoRefreshMinutes ?? 10, limit = settings?.autoRefreshLimit ?? 3;
+    body.append(el("p", "lc-muted", `Resends the chat's last prompt every ${every} minute${every === 1 ? "" : "s"}, up to ${limit} time${limit === 1 ? "" : "s"} after each reply to keep cache warm. Changable in the settings.`));
     const control = on ? button("Turn off", () => { void this.toggle(false); }) : button("Keep cache warm", () => { void this.toggle(true); }, "lc-primary");
     control.disabled = this.busy || !settings || !on && this.blocked();
     body.append(control);

@@ -20,11 +20,13 @@ If you like a preset and it's not cache friendly, you can always ask __[LumiAgen
 
 ## Basic Use
 
-1. Send a normal message in your chat. The first successful generation establishes your cache state.
+1. Ensure your provider caches your requests (no raw Anthropic API).
 
-2. Later sends, regenerations, swipes, and continuations compare their prompt history with that cache state.
+2. Send a normal message in your chat. The first successful generation establishes your cache state.
 
-3. When your cache breaks, *Pause and review*"* lets you see the areas that broke cache. You can configure exactly what gets flagged and at what depth.
+3. Later sends, regenerations, swipes, and continuations compare their prompt history with that cache state.
+
+4. When your cache breaks, *Pause and review*"* lets you see the areas that broke cache. You can configure exactly what gets flagged and at what depth.
 
 ## Cache policy settings
 
@@ -40,7 +42,9 @@ To configure acceptable cache breaking, open the settings, edit your policy, the
 
 - *"Allow scheduled cache breaks"* is an optional toggle for the above setting. After *"Y successful model replies"* (default 20), the next request is allowed to break cache and update the prefix. Reccomended to enable this if you are using the above option.
 
-*"Keep Cache Warm"* is optional and off by default. Turn it on or off from the input bar drawer or in settings. After a successful reply, it resends that chat's last prompt with minimal output every X minutes, up to Y times, so the cache is still there when you come back. **Each refresh is a billed request.** While it runs, a banner above the input shows a spinner, the time to the next refresh, and a Stop button that turns it off. Set the interval shorter than your cache lifetime. Only the chat you sent in last is refreshed, and a new reply starts the count over. It stops by itself if a refresh misses the cache or fails, and it can't repeat native tools, so a chat that sends tools will usually stop after the first refresh.
+![1793835984261](image/README/1793835984261.png)
+
+*"Keep Cache Warm"* is optional and off by default. Turn it on or off from the input bar drawer or in settings. After a successful reply, it resends that chat's last prompt with minimal output every X minutes, up to Y times to keep cache from expiring. **Important:** Set the interval shorter than your cache lifetime!
 
 ## Cache health
 
@@ -66,6 +70,8 @@ These are regexes you have active that may prove bad for caching!
 ![1793786741051](image/README/1793786741051.png)
 
 Get [LumiBooks](https://github.com/AMousePad/LumiBooks) or another cache-friendly memory compaction extension.
+
+![1793834273042](image/README/1793834273042.png)
 
 ## Simulate caching
 ![1793789692485](image/README/1793789692485.png)
