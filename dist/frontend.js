@@ -183,12 +183,12 @@ function policySettings(value, busy, save) {
   interval.hidden = !draft.refreshEnabled;
   const idle = section("Keep Cache Warm");
   let idleFields = [];
-  toggle(idle, "autoRefreshEnabled", "Keep Cache Warm", "Resends the chat's last prompt to keep it cached. Each refresh is a billed request.", () => {
+  toggle(idle, "autoRefreshEnabled", "Keep Cache Warm", "Periodically resends the chat's last prompt to prevent cache expiry.", () => {
     idleFields.forEach((field) => {
       field.hidden = !draft.autoRefreshEnabled;
     });
   });
-  idleFields = [number(idle, "autoRefreshMinutes", "Minutes between refreshes", "10"), number(idle, "autoRefreshLimit", "Maximum refreshes after each reply", "3"), el("p", "lc-muted", "Starts after each successful reply, in the chat you sent in last. Set the interval shorter than your cache lifetime. It stops if a refresh misses the cache. You can also turn this on or off from the input bar drawer.")];
+  idleFields = [number(idle, "autoRefreshMinutes", "Minutes between refreshes", "10"), number(idle, "autoRefreshLimit", "Maximum refreshes after each reply", "3"), el("p", "lc-muted", "Starts after a successful reply. Set the interval ~30s shorter than your provider's cache lifetime. You can also turn this on or off from the input bar drawer.")];
   idle.append(idleFields[2]);
   idleFields.forEach((field) => {
     field.hidden = !draft.autoRefreshEnabled;
@@ -2312,7 +2312,7 @@ class KeepWarm {
     this.modalStatus = text;
     body.append(status);
     const every = settings?.autoRefreshMinutes ?? 10, limit = settings?.autoRefreshLimit ?? 3;
-    body.append(el("p", "lc-muted", `Resends the chat's last prompt every ${every} minute${every === 1 ? "" : "s"}, up to ${limit} time${limit === 1 ? "" : "s"} after each reply, so the cache is still there when you come back. Each refresh is a billed request. Change the timing in LumiCache settings.`));
+    body.append(el("p", "lc-muted", `Resends the chat's last prompt every ${every} minute${every === 1 ? "" : "s"}, up to ${limit} time${limit === 1 ? "" : "s"} after each reply to keep cache warm. Changable in the settings.`));
     const control = on ? button("Turn off", () => {
       this.toggle(false);
     }) : button("Keep cache warm", () => {
