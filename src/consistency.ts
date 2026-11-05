@@ -52,9 +52,26 @@ export function historyUnchanged(before: LlmMessageDTO[], after: LlmMessageDTO[]
     return a.length > 0 && a.every(x => b.has(x.key) && wire(x.message) === wire(b.get(x.key)!));
   } catch { return false; }
 }
+/** An edit, swipe or rewind breaks the cache there anyway, so only older messages stay frozen. */
+function followChat(before: LlmMessageDTO[], now: ReturnType<typeof keyed>, released: ReadonlySet<string>) {
+  const newest = now.at(-1);
+  if (!newest) return before;
+  const index = newest.message.sourceIndexInChat, live = new Map(now.map(x => [x.key, x.message]));
+  const history = keyed(before);
+  const broken = history.find(x => {
+    const message = live.get(x.key);
+    if (!message) return index !== undefined && x.message.sourceIndexInChat !== undefined && x.message.sourceIndexInChat >= index;
+    return (x.key === newest.key || released.has(identity(x.message)!)) && wire(message) !== wire(x.message);
+  });
+  if (!broken) return before;
+  const first = before.indexOf(history[0].message);
+  let cut = before.indexOf(broken.message);
+  while (cut > first && !historyMessage(before[cut - 1])) cut--;
+  return before.slice(0, cut);
+}
 /** Restore the frozen prefix and history content. Fresh injections can only enter the permitted tail. */
-export async function preserve(before: LlmMessageDTO[] | null, current: LlmMessageDTO[], policy: Required<Settings>, context: InspectionContext, count?: TokenCounter) {
-  const now = keyed(current), old = before ? keyed(before) : [];
+export async function preserve(saved: LlmMessageDTO[] | null, current: LlmMessageDTO[], policy: Required<Settings>, context: InspectionContext, count?: TokenCounter, released: ReadonlySet<string> = new Set()) {
+  const now = keyed(current), before = saved && followChat(saved, now, released), old = before ? keyed(before) : [];
   const oldKeys = new Set(old.map(x => x.key));
   const maxOldIndex = old.reduce((max, x) => Math.max(max, x.message.sourceIndexInChat ?? -1), -1);
   const added = now.filter(x => !oldKeys.has(x.key) && (!old.length || x.message.sourceIndexInChat !== undefined && x.message.sourceIndexInChat > maxOldIndex));

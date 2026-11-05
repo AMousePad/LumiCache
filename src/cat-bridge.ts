@@ -20,7 +20,7 @@ export class CatBridge {
   private controllers = new Map<string, AbortController>();
   private lastBySlot = new Map<string, string>();
   constructor(private api: Api, private guard: Guard, private settings: (user: string) => Promise<Settings>,
-    private epoch: (chatId: string) => Promise<string | null>) {}
+    private epoch: (user: string, chatId: string) => Promise<string | null>) {}
   register(drainMs = 50) {
     this.api.rpcPool.handle("cat", async ctx => {
       if (ctx.requesterExtensionId !== CAT_EXTENSION) throw new Error("Unauthorized LumiCache caller.");
@@ -58,7 +58,7 @@ export class CatBridge {
         isDryRun: false, signal: controller.signal, interceptorDeadlineAt: Date.now() + REVIEW_LIMIT_MS,
         mainDispatch: await connectionDispatch(this.api, request.connectionId, request.userId, request.model),
         scope: request.slotId, label: request.label,
-      }, settings, await this.epoch(request.chatId));
+      }, settings, await this.epoch(request.userId, request.chatId));
       this.publish(request.id, { status: "done", messages });
     } catch (error) {
       this.publish(request.id, { status: "error", error: errorText(error) });

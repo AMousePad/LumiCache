@@ -36,10 +36,24 @@ export function clippingFindings(stats?: ContextClipStatsDTO): Finding[] {
 export function reportedUsage(saved: SavedBreakdownDTO | null, messageId: string): CacheUsage | undefined {
   const raw = saved?.usage?.provider_raw as Record<string, any> | undefined;
   if (!raw) return;
-  const number = (...values: unknown[]) => values.find((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
-  const read = number(raw.cache_read_input_tokens, raw.prompt_tokens_details?.cached_tokens, raw.input_tokens_details?.cached_tokens, raw.cachedContentTokenCount);
-  const write = number(raw.cache_creation_input_tokens, raw.prompt_tokens_details?.cache_write_tokens, raw.input_tokens_details?.cache_write_tokens);
+  // Routers can fill in several of these at once, some with a zero, so the largest is the real count.
+  const largest = (...values: unknown[]) => {
+    const found = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
+    return found.length ? Math.max(...found) : undefined;
+  };
+  const read = largest(raw.cache_read_input_tokens, raw.prompt_tokens_details?.cached_tokens, raw.input_tokens_details?.cached_tokens, raw.cachedContentTokenCount, raw.prompt_cache_hit_tokens, raw.cached_tokens);
+  const write = largest(raw.cache_creation_input_tokens, raw.prompt_tokens_details?.cache_write_tokens, raw.input_tokens_details?.cache_write_tokens);
   return read === undefined && write === undefined ? undefined : { read, write, model: saved!.model, messageId };
+}
+/**
+ * Usage from a finished send. Some providers leave the cached count out on a miss, so a prompt size with no count reads as zero.
+ * That is only meaningful after a reply that did report a count, which the guard's comparison already requires.
+ */
+export function sentUsage(usage: unknown): Pick<CacheUsage, "read" | "write"> | undefined {
+  const found = reportedUsage({ usage } as SavedBreakdownDTO, "");
+  if (found) return found;
+  const raw = (usage as { provider_raw?: Record<string, unknown> } | null | undefined)?.provider_raw;
+  return raw && [raw.prompt_tokens, raw.input_tokens, raw.promptTokenCount].some(value => typeof value === "number") ? { read: 0 } : undefined;
 }
 const WRITES = /counter|toggle|(?:set|inc|dec|add|delete|flush)(?:global|chat|g)?var|[.$@][\w-]+\s*(?:=|\+\+|--|\+=|-=)/i;
 /** The settings a preset exposes to its user, which also back {{var::name}}. */

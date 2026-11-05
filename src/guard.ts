@@ -1,12 +1,15 @@
 import { buildTimeline, promptOutline } from "./health/timeline";
 import type { BaselinePersistence } from "./baseline";
+import type { CacheUsage } from "./health/types";
 import type { LlmMessageDTO } from "lumiverse-spindle-types";
 import { compare, snapshot } from "./compare";
 import type { Check, InspectionContext, Settings, Snapshot } from "./shared";
 import { validateSettings } from "./settings";
 import { historyUnchanged, preserve, retain, tailStart, type TokenCounter } from "./consistency";
 
-interface ChatState { restored?: boolean; baseline: Snapshot | null; check: Check | null; busy: boolean; retained?: ReturnType<typeof retain>; candidate?: ReturnType<typeof retain>; replies: number; epoch?: string | null; connection?: string }
+interface ChatState { releasedThrough?: number; restored?: boolean; baseline: Snapshot | null; check: Check | null; busy: boolean; retained?: ReturnType<typeof retain>; candidate?: ReturnType<typeof retain>; replies: number; epoch?: string | null; connection?: string; cached?: number }
+/** Providers round their counts and cache on a best-effort basis, so a drop this small says nothing. */
+const MISS_TOKENS = 1024, MISS_SHARE = 0.05, MAX_RELEASED_CHATS = 256, MAX_RELEASED_MESSAGES = 256;
 interface Pending {
   userId: string; session?: string; check: Check;
   settle(allow: boolean, reason?: string): void;
@@ -14,7 +17,9 @@ interface Pending {
 export class Guard {
   private chats = new Map<string, ChatState>();
   private pending = new Map<string, Pending>();
-  private candidates = new Map<string, { key: string; userId: string; check: Check; retained: ReturnType<typeof retain>; refresh: boolean; epoch: string | null; connection?: string }>();
+  private candidates = new Map<string, { key: string; userId: string; check: Check; retained: ReturnType<typeof retain>; refresh: boolean; epoch: string | null; connection?: string; alarming: boolean; releasedThrough: number }>();
+  private released = new Map<string, Map<string, number>>();
+  private releaseCount = 0;
   constructor(private onChange: (user: string, chatId: string, session?: string) => void, private countTokens?: TokenCounter,
     private store?: BaselinePersistence, private toast?: (user: string, tone: "warning" | "success", title: string, message: string) => void) {}
   /** Runs beside the send, since a slow token count should not delay it. */
@@ -100,7 +105,19 @@ export class Guard {
     const state = this.chats.get(this.key(user, chat));
     if (state && !state.busy) { state.baseline = null; state.retained = undefined; state.restored = false; state.replies = 0; }
   }
-  forget(user: string, chat: string) { this.store?.clear(user, chat); }
+  /** Every sender of this chat, such as a CAT slot, sends the message's current text once. */
+  release(user: string, chat: string, messageId: string) {
+    const key = this.key(user, chat), ids = this.released.get(key) ?? new Map<string, number>();
+    ids.delete(messageId); ids.set(messageId, ++this.releaseCount);
+    if (ids.size > MAX_RELEASED_MESSAGES) ids.delete(ids.keys().next().value!);
+    this.released.delete(key); this.released.set(key, ids);
+    if (this.released.size > MAX_RELEASED_CHATS) this.released.delete(this.released.keys().next().value!);
+  }
+  private releasedFor(user: string, chat: string, state: ChatState) {
+    const through = state.releasedThrough ?? 0;
+    return new Set([...this.released.get(this.key(user, chat)) ?? []].filter(([, count]) => count > through).map(([id]) => id));
+  }
+  forget(user: string, chat: string) { this.released.delete(this.key(user, chat)); this.store?.clear(user, chat); }
   clear(user: string, chat: string) {
     const states = this.chatStates(user, chat);
     if (states.some(([, state]) => state.busy)) throw new Error("Finish or stop this generation before clearing its baseline.");
@@ -134,14 +151,16 @@ export class Guard {
       } catch (error) { console.warn("[LumiCache] Could not read the saved baseline:", error); }
       context.signal.throwIfAborted();
     }
+    const releasedThrough = this.releaseCount;
     const incoming = snapshot(messages, context);
-    const planned = !!state.baseline && epoch !== null && epoch !== state.epoch;
-    const refresh = !!state.baseline && (epoch !== null ? epoch !== state.epoch : config.forceConsistency && config.refreshEnabled && state.replies >= config.refreshEvery);
+    const epochChanged = epoch !== (state.epoch ?? null);
+    const planned = !!state.baseline && epoch !== null && epochChanged;
+    const refresh = !!state.baseline && (epochChanged || epoch === null && config.forceConsistency && config.refreshEnabled && state.replies >= config.refreshEvery);
     const routeChanged = !!state.baseline && state.baseline.route !== incoming.route;
     let policy: Check["policy"];
     if (refresh && !routeChanged) policy = { action: "refresh", restored: 0, relocated: 0, replies: state.replies, approximate: false };
     else if (config.forceConsistency && !routeChanged) {
-      const result = await preserve(state.retained?.messages ?? null, messages, config, context, this.countTokens);
+      const result = await preserve(state.retained?.messages ?? null, messages, config, context, this.countTokens, this.releasedFor(context.userId, context.chatId, state));
       messages = result.messages;
       policy = { action: state.retained ? "preserved" : "seed", restored: result.restored, relocated: result.relocated, replies: state.replies, approximate: result.approximate };
     }
@@ -190,7 +209,7 @@ export class Guard {
       if (alarming && settings.mode === "warn") void this.toastBreak(messages, check, context, "warning", depth => `Cache has been broken at depth ${depth}!`, tokens => `${tokens} tokens will be recached 💸.`);
       // LumiBooks already toasted when it finished, so this reports what that costs on the first send to see it.
       else if (planned && check.comparison.kind === "break" && !routeChanged) void this.toastBreak(messages, check, context, "success", () => "LumiBooks Compaction Successful.", tokens => `Gracefully re-caching ${tokens} tokens 💖.`);
-      this.candidates.set(this.key(context.userId, context.generationId), { key: this.key(context.userId, context.chatId, context.scope), userId: context.userId, check, retained, refresh, epoch, connection: context.mainDispatch.descriptor?.connectionId });
+      this.candidates.set(this.key(context.userId, context.generationId), { key: this.key(context.userId, context.chatId, context.scope), userId: context.userId, check, retained, refresh, epoch, connection: context.mainDispatch.descriptor?.connectionId, alarming, releasedThrough });
       this.notify(context.userId, context.chatId, context.frontendSessionId);
       return messages;
     } catch (error) {
@@ -205,8 +224,22 @@ export class Guard {
     const state = this.chats.get(this.key(user, chat));
     return state?.baseline && state.retained && state.connection ? { messages: state.retained.messages, connectionId: state.connection, model: state.baseline.model } : null;
   }
+  /** Compares what the provider read with what the last reply left cached. The prompt comparison then says why it fell short. */
+  private reportCache(user: string, state: ChatState, check: Check, alarming: boolean, usage?: Pick<CacheUsage, "read" | "write">) {
+    const expected = state.cached, read = usage?.read;
+    state.cached = read === undefined ? undefined : read + (usage?.write ?? 0);
+    if (!this.toast || !expected || read === undefined) return;
+    const lost = expected - read, { kind, routeChanged, firstMessage } = check.comparison;
+    if (lost < MISS_TOKENS || lost < expected * MISS_SHARE || kind === "break" && !alarming) return;
+    const format = (tokens: number) => tokens.toLocaleString("en-US");
+    const cause = routeChanged ? "The model or connection changed."
+      : kind === "break" ? `The prompt changed at depth ${check.after.messages.length - Math.min(firstMessage ?? 0, check.after.messages.length - 1)}.`
+      : "The prompt didn't change, so the cache likely expired.";
+    try { this.toast(user, "warning", `Cache miss: ${format(lost)} tokens`, `The provider read ${format(read)} of ${format(expected)} cached tokens. ${cause}`); }
+    catch (error) { console.warn("[LumiCache] Could not show the cache toast:", error); }
+  }
   /** Returns whether this send became the new baseline. */
-  finish(user: string, generation: string, success: boolean, replyId?: string): boolean {
+  finish(user: string, generation: string, success: boolean, replyId?: string, usage?: Pick<CacheUsage, "read" | "write">): boolean {
     const key = this.key(user, generation), candidate = this.candidates.get(key);
     if (!candidate) return false;
     this.candidates.delete(key);
@@ -214,7 +247,7 @@ export class Guard {
     if (!state || state.check !== candidate.check) return false;
     state.busy = false; candidate.check.status = success ? "completed" : "failed";
     state.candidate = undefined;
-    if (success) { state.baseline = candidate.check.after; state.retained = candidate.retained; state.replies = candidate.refresh ? 1 : state.replies + 1; state.epoch = candidate.epoch; state.connection = candidate.connection;
+    if (success) { this.reportCache(user, state, candidate.check, candidate.alarming, usage); state.baseline = candidate.check.after; state.retained = candidate.retained; state.replies = candidate.refresh ? 1 : state.replies + 1; state.epoch = candidate.epoch; state.connection = candidate.connection; state.releasedThrough = candidate.releasedThrough;
       const [, chat, scope] = JSON.parse(candidate.key) as string[], after = candidate.check.after;
       this.store?.save(user, chat, scope, { at: after.at, route: after.route, model: after.model, messages: candidate.retained.messages, replies: state.replies, epoch: state.epoch }, replyId);
     }

@@ -63,6 +63,44 @@ describe("cache consistency",()=>{
   const refresh=await sent(guard,[instruction("Changed"),h(1,"edit"),h(2),h(3)],policy);expect(refresh[0].content).toBe("Changed");
   const fourth=await sent(guard,[instruction("Next change"),h(1,"later"),h(2),h(3),h(4)],policy);expect(fourth[0].content).toBe("Changed");expect(fourth[1].content).toBe("edit");
  });
+ test("the newest message always reaches the model at any depth, while older edits stay frozen",async()=>{
+  for(const acceptableDepth of [0,2]){
+   const policy=validateSettings({...force,mode:"warn",acceptableDepth});
+   const edited=new Guard(()=>{});await sent(edited,[instruction(),h(1),h(2),h(3)],policy);
+   expect((await sent(edited,[instruction(),h(1,"later"),h(2),h(3,"OOC")],policy)).map(m=>m.content)).toEqual(["Stable","History 1","History 2","OOC"]);
+   const replaced=new Guard(()=>{});await sent(replaced,[instruction(),h(1),h(2),h(3)],policy);
+   const swap:LlmMessageDTO={...h(3,"OOC"),sourceMessageId:"fresh"};
+   for(let swipe=0;swipe<2;swipe++) expect((await sent(replaced,[instruction(),h(1),h(2),swap],policy)).map(m=>m.content)).toEqual(["Stable","History 1","History 2","OOC"]);
+   const rewound=new Guard(()=>{});await sent(rewound,[instruction(),h(1),h(2),h(3)],policy);
+   expect((await sent(rewound,[instruction(),h(1)],policy)).map(m=>m.content)).toEqual(["Stable","History 1"]);
+  }
+ });
+ test("an edited or swiped message frees itself and everything newer, and only older messages stay frozen",async()=>{
+  for(const acceptableDepth of [0,2]){
+   const policy=validateSettings({...force,mode:"warn",acceptableDepth}), guard=new Guard(()=>{});
+   const contents=(m:LlmMessageDTO[])=>m.map(x=>x.content);
+   const changed=[instruction("Changed"),h(1,"old edit"),h(2,"swiped"),h(3,"later edit"),h(4,"newest")];
+   await sent(guard,[instruction(),h(1),h(2),h(3),h(4,"newest")],policy);
+   expect(contents(await sent(guard,changed,policy))).toEqual(["Stable","History 1","History 2","History 3","newest"]);
+   guard.release("user","chat","h1");guard.release("user","chat","missing");
+   const same=[instruction(),h(1),h(2,"swiped"),h(3),h(4,"newest")];
+   expect(contents(await sent(guard,same,policy))).toEqual(["Stable","History 1","History 2","History 3","newest"]);
+   guard.release("user","chat","h2");
+   const expected=["Stable","History 1","swiped","later edit","newest"];
+   expect(contents(await sent(guard,changed,policy,false))).toEqual(expected);
+   expect(contents(await sent(guard,changed,policy))).toEqual(expected);
+   expect(contents(await sent(guard,[instruction(),h(1),h(2,"again"),h(3),h(4,"newest")],policy))).toEqual(expected);
+  }
+ });
+ test("leaving an epoch releases the frozen prompt once and brings the timed refresh back",async()=>{
+  const guard=new Guard(()=>{}), policy=validateSettings({...force,refreshEnabled:true,refreshEvery:100});
+  const send=async(messages:LlmMessageDTO[],epoch:string|null)=>{const c=context();const out=await guard.inspect(messages,c,policy,epoch);guard.finish(c.userId,c.generationId,true);return out[0].content;};
+  await send([instruction("Codex"),h(1)],"codex:1");
+  expect(await send([instruction("No codex"),h(1)],"no-codex:1")).toBe("No codex");
+  expect(await send([instruction("Mode off"),h(1)],null)).toBe("Mode off");
+  expect(await send([instruction("Frozen again"),h(1)],null)).toBe("Mode off");
+  expect(await send([instruction("Mode on"),h(1)],"codex:")).toBe("Mode on");
+ });
  test("missing history identity fails closed and releases the busy state",async()=>{
   const guard=new Guard(()=>{});await expect(sent(guard,[{role:"user",content:"No identity",__isChatHistory:true}])).rejects.toThrow("source message IDs");
   await sent(guard,[instruction(),h(1)]);

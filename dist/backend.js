@@ -69,1804 +69,6 @@ class BaselineStore {
   }
 }
 
-// src/prompt-store.ts
-import { createHash as createHash2 } from "crypto";
-// node_modules/diff/libesm/diff/base.js
-class Diff {
-  diff(oldStr, newStr, options = {}) {
-    let callback;
-    if (typeof options === "function") {
-      callback = options;
-      options = {};
-    } else if ("callback" in options) {
-      callback = options.callback;
-    }
-    const oldString = this.castInput(oldStr, options);
-    const newString = this.castInput(newStr, options);
-    const oldTokens = this.removeEmpty(this.tokenize(oldString, options));
-    const newTokens = this.removeEmpty(this.tokenize(newString, options));
-    return this.diffWithOptionsObj(oldTokens, newTokens, options, callback);
-  }
-  diffWithOptionsObj(oldTokens, newTokens, options, callback) {
-    var _a;
-    const done = (value) => {
-      value = this.postProcess(value, options);
-      if (callback) {
-        setTimeout(function() {
-          callback(value);
-        }, 0);
-        return;
-      } else {
-        return value;
-      }
-    };
-    const newLen = newTokens.length, oldLen = oldTokens.length;
-    let editLength = 1;
-    let maxEditLength = newLen + oldLen;
-    if (options.maxEditLength != null) {
-      maxEditLength = Math.min(maxEditLength, options.maxEditLength);
-    }
-    const maxExecutionTime = (_a = options.timeout) !== null && _a !== undefined ? _a : Infinity;
-    const abortAfterTimestamp = Date.now() + maxExecutionTime;
-    const bestPath = [{ oldPos: -1, lastComponent: undefined }];
-    let newPos = this.extractCommon(bestPath[0], newTokens, oldTokens, 0, options);
-    if (bestPath[0].oldPos + 1 >= oldLen && newPos + 1 >= newLen) {
-      return done(this.buildValues(bestPath[0].lastComponent, newTokens, oldTokens));
-    }
-    let minDiagonalToConsider = -Infinity, maxDiagonalToConsider = Infinity;
-    const execEditLength = () => {
-      for (let diagonalPath = Math.max(minDiagonalToConsider, -editLength);diagonalPath <= Math.min(maxDiagonalToConsider, editLength); diagonalPath += 2) {
-        let basePath;
-        const removePath = bestPath[diagonalPath - 1], addPath = bestPath[diagonalPath + 1];
-        if (removePath) {
-          bestPath[diagonalPath - 1] = undefined;
-        }
-        let canAdd = false;
-        if (addPath) {
-          const addPathNewPos = addPath.oldPos - diagonalPath;
-          canAdd = addPath && 0 <= addPathNewPos && addPathNewPos < newLen;
-        }
-        const canRemove = removePath && removePath.oldPos + 1 < oldLen;
-        if (!canAdd && !canRemove) {
-          bestPath[diagonalPath] = undefined;
-          continue;
-        }
-        if (!canRemove || canAdd && removePath.oldPos < addPath.oldPos) {
-          basePath = this.addToPath(addPath, true, false, 0, options);
-        } else {
-          basePath = this.addToPath(removePath, false, true, 1, options);
-        }
-        newPos = this.extractCommon(basePath, newTokens, oldTokens, diagonalPath, options);
-        if (basePath.oldPos + 1 >= oldLen && newPos + 1 >= newLen) {
-          return done(this.buildValues(basePath.lastComponent, newTokens, oldTokens)) || true;
-        } else {
-          bestPath[diagonalPath] = basePath;
-          if (basePath.oldPos + 1 >= oldLen) {
-            maxDiagonalToConsider = Math.min(maxDiagonalToConsider, diagonalPath - 1);
-          }
-          if (newPos + 1 >= newLen) {
-            minDiagonalToConsider = Math.max(minDiagonalToConsider, diagonalPath + 1);
-          }
-        }
-      }
-      editLength++;
-    };
-    if (callback) {
-      (function exec() {
-        setTimeout(function() {
-          if (editLength > maxEditLength || Date.now() > abortAfterTimestamp) {
-            return callback(undefined);
-          }
-          if (!execEditLength()) {
-            exec();
-          }
-        }, 0);
-      })();
-    } else {
-      while (editLength <= maxEditLength && Date.now() <= abortAfterTimestamp) {
-        const ret = execEditLength();
-        if (ret) {
-          return ret;
-        }
-      }
-    }
-  }
-  addToPath(path, added, removed, oldPosInc, options) {
-    const last = path.lastComponent;
-    if (last && !options.oneChangePerToken && last.added === added && last.removed === removed) {
-      return {
-        oldPos: path.oldPos + oldPosInc,
-        lastComponent: { count: last.count + 1, added, removed, previousComponent: last.previousComponent }
-      };
-    } else {
-      return {
-        oldPos: path.oldPos + oldPosInc,
-        lastComponent: { count: 1, added, removed, previousComponent: last }
-      };
-    }
-  }
-  extractCommon(basePath, newTokens, oldTokens, diagonalPath, options) {
-    const newLen = newTokens.length, oldLen = oldTokens.length;
-    let oldPos = basePath.oldPos, newPos = oldPos - diagonalPath, commonCount = 0;
-    while (newPos + 1 < newLen && oldPos + 1 < oldLen && this.equals(oldTokens[oldPos + 1], newTokens[newPos + 1], options)) {
-      newPos++;
-      oldPos++;
-      commonCount++;
-      if (options.oneChangePerToken) {
-        basePath.lastComponent = { count: 1, previousComponent: basePath.lastComponent, added: false, removed: false };
-      }
-    }
-    if (commonCount && !options.oneChangePerToken) {
-      basePath.lastComponent = { count: commonCount, previousComponent: basePath.lastComponent, added: false, removed: false };
-    }
-    basePath.oldPos = oldPos;
-    return newPos;
-  }
-  equals(left, right, options) {
-    if (options.comparator) {
-      return options.comparator(left, right);
-    } else {
-      return left === right || !!options.ignoreCase && left.toLowerCase() === right.toLowerCase();
-    }
-  }
-  removeEmpty(array) {
-    const ret = [];
-    for (let i = 0;i < array.length; i++) {
-      if (array[i]) {
-        ret.push(array[i]);
-      }
-    }
-    return ret;
-  }
-  castInput(value, options) {
-    return value;
-  }
-  tokenize(value, options) {
-    return Array.from(value);
-  }
-  join(chars) {
-    return chars.join("");
-  }
-  postProcess(changeObjects, options) {
-    return changeObjects;
-  }
-  get useLongestToken() {
-    return false;
-  }
-  buildValues(lastComponent, newTokens, oldTokens) {
-    const components = [];
-    let nextComponent;
-    while (lastComponent) {
-      components.push(lastComponent);
-      nextComponent = lastComponent.previousComponent;
-      delete lastComponent.previousComponent;
-      lastComponent = nextComponent;
-    }
-    components.reverse();
-    const componentLen = components.length;
-    let componentPos = 0, newPos = 0, oldPos = 0;
-    for (;componentPos < componentLen; componentPos++) {
-      const component = components[componentPos];
-      if (!component.removed) {
-        if (!component.added && this.useLongestToken) {
-          let value = newTokens.slice(newPos, newPos + component.count);
-          value = value.map(function(value, i) {
-            const oldValue = oldTokens[oldPos + i];
-            return oldValue.length > value.length ? oldValue : value;
-          });
-          component.value = this.join(value);
-        } else {
-          component.value = this.join(newTokens.slice(newPos, newPos + component.count));
-        }
-        newPos += component.count;
-        if (!component.added) {
-          oldPos += component.count;
-        }
-      } else {
-        component.value = this.join(oldTokens.slice(oldPos, oldPos + component.count));
-        oldPos += component.count;
-      }
-    }
-    return components;
-  }
-}
-
-// node_modules/diff/libesm/util/string.js
-function longestCommonPrefix(str1, str2) {
-  let i;
-  for (i = 0;i < str1.length && i < str2.length; i++) {
-    if (str1[i] != str2[i]) {
-      return str1.slice(0, i);
-    }
-  }
-  return str1.slice(0, i);
-}
-function longestCommonSuffix(str1, str2) {
-  let i;
-  if (!str1 || !str2 || str1[str1.length - 1] != str2[str2.length - 1]) {
-    return "";
-  }
-  for (i = 0;i < str1.length && i < str2.length; i++) {
-    if (str1[str1.length - (i + 1)] != str2[str2.length - (i + 1)]) {
-      return str1.slice(-i);
-    }
-  }
-  return str1.slice(-i);
-}
-function replacePrefix(string, oldPrefix, newPrefix) {
-  if (string.slice(0, oldPrefix.length) != oldPrefix) {
-    throw Error(`string ${JSON.stringify(string)} doesn't start with prefix ${JSON.stringify(oldPrefix)}; this is a bug`);
-  }
-  return newPrefix + string.slice(oldPrefix.length);
-}
-function replaceSuffix(string, oldSuffix, newSuffix) {
-  if (!oldSuffix) {
-    return string + newSuffix;
-  }
-  if (string.slice(-oldSuffix.length) != oldSuffix) {
-    throw Error(`string ${JSON.stringify(string)} doesn't end with suffix ${JSON.stringify(oldSuffix)}; this is a bug`);
-  }
-  return string.slice(0, -oldSuffix.length) + newSuffix;
-}
-function removePrefix(string, oldPrefix) {
-  return replacePrefix(string, oldPrefix, "");
-}
-function removeSuffix(string, oldSuffix) {
-  return replaceSuffix(string, oldSuffix, "");
-}
-function maximumOverlap(string1, string2) {
-  return string2.slice(0, overlapCount(string1, string2));
-}
-function overlapCount(a, b) {
-  let startA = 0;
-  if (a.length > b.length) {
-    startA = a.length - b.length;
-  }
-  let endB = b.length;
-  if (a.length < b.length) {
-    endB = a.length;
-  }
-  const map = Array(endB);
-  let k = 0;
-  map[0] = 0;
-  for (let j = 1;j < endB; j++) {
-    if (b[j] == b[k]) {
-      map[j] = map[k];
-    } else {
-      map[j] = k;
-    }
-    while (k > 0 && b[j] != b[k]) {
-      k = map[k];
-    }
-    if (b[j] == b[k]) {
-      k++;
-    }
-  }
-  k = 0;
-  for (let i = startA;i < a.length; i++) {
-    while (k > 0 && a[i] != b[k]) {
-      k = map[k];
-    }
-    if (a[i] == b[k]) {
-      k++;
-    }
-  }
-  return k;
-}
-function segment(string, segmenter) {
-  const parts = [];
-  for (const segmentObj of Array.from(segmenter.segment(string))) {
-    const segment = segmentObj.segment;
-    if (parts.length && /\s/.test(parts[parts.length - 1]) && /\s/.test(segment)) {
-      parts[parts.length - 1] += segment;
-    } else {
-      parts.push(segment);
-    }
-  }
-  return parts;
-}
-function trailingWs(string, segmenter) {
-  if (segmenter) {
-    return leadingAndTrailingWs(string, segmenter)[1];
-  }
-  let i;
-  for (i = string.length - 1;i >= 0; i--) {
-    if (!string[i].match(/\s/)) {
-      break;
-    }
-  }
-  return string.substring(i + 1);
-}
-function leadingWs(string, segmenter) {
-  if (segmenter) {
-    return leadingAndTrailingWs(string, segmenter)[0];
-  }
-  const match = string.match(/^\s*/);
-  return match ? match[0] : "";
-}
-function leadingAndTrailingWs(string, segmenter) {
-  if (!segmenter) {
-    return [leadingWs(string), trailingWs(string)];
-  }
-  if (segmenter.resolvedOptions().granularity != "word") {
-    throw new Error('The segmenter passed must have a granularity of "word"');
-  }
-  const segments = segment(string, segmenter);
-  const firstSeg = segments[0];
-  const lastSeg = segments[segments.length - 1];
-  const head = /\s/.test(firstSeg) ? firstSeg : "";
-  const tail = /\s/.test(lastSeg) ? lastSeg : "";
-  return [head, tail];
-}
-
-// node_modules/diff/libesm/diff/word.js
-var extendedWordChars = "a-zA-Z0-9_\\u{AD}\\u{C0}-\\u{D6}\\u{D8}-\\u{F6}\\u{F8}-\\u{2C6}\\u{2C8}-\\u{2D7}\\u{2DE}-\\u{2FF}\\u{1E00}-\\u{1EFF}";
-var tokenizeIncludingWhitespace = new RegExp(`[${extendedWordChars}]+|\\s+|[^${extendedWordChars}]`, "ug");
-
-class WordDiff extends Diff {
-  equals(left, right, options) {
-    if (options.ignoreCase) {
-      left = left.toLowerCase();
-      right = right.toLowerCase();
-    }
-    return left.trim() === right.trim();
-  }
-  tokenize(value, options = {}) {
-    let parts;
-    if (options.intlSegmenter) {
-      const segmenter = options.intlSegmenter;
-      if (segmenter.resolvedOptions().granularity != "word") {
-        throw new Error('The segmenter passed must have a granularity of "word"');
-      }
-      parts = segment(value, segmenter);
-    } else {
-      parts = value.match(tokenizeIncludingWhitespace) || [];
-    }
-    const tokens = [];
-    let prevPart = null;
-    parts.forEach((part) => {
-      if (/\s/.test(part)) {
-        if (prevPart == null) {
-          tokens.push(part);
-        } else {
-          tokens.push(tokens.pop() + part);
-        }
-      } else if (prevPart != null && /\s/.test(prevPart)) {
-        if (tokens[tokens.length - 1] == prevPart) {
-          tokens.push(tokens.pop() + part);
-        } else {
-          tokens.push(prevPart + part);
-        }
-      } else {
-        tokens.push(part);
-      }
-      prevPart = part;
-    });
-    return tokens;
-  }
-  join(tokens) {
-    return tokens.map((token, i) => {
-      if (i == 0) {
-        return token;
-      } else {
-        return token.replace(/^\s+/, "");
-      }
-    }).join("");
-  }
-  postProcess(changes, options) {
-    if (!changes || options.oneChangePerToken) {
-      return changes;
-    }
-    let lastKeep = null;
-    let insertion = null;
-    let deletion = null;
-    changes.forEach((change) => {
-      if (change.added) {
-        insertion = change;
-      } else if (change.removed) {
-        deletion = change;
-      } else {
-        if (insertion || deletion) {
-          dedupeWhitespaceInChangeObjects(lastKeep, deletion, insertion, change, options.intlSegmenter);
-        }
-        lastKeep = change;
-        insertion = null;
-        deletion = null;
-      }
-    });
-    if (insertion || deletion) {
-      dedupeWhitespaceInChangeObjects(lastKeep, deletion, insertion, null, options.intlSegmenter);
-    }
-    return changes;
-  }
-}
-var wordDiff = new WordDiff;
-function dedupeWhitespaceInChangeObjects(startKeep, deletion, insertion, endKeep, segmenter) {
-  if (deletion && insertion) {
-    const [oldWsPrefix, oldWsSuffix] = leadingAndTrailingWs(deletion.value, segmenter);
-    const [newWsPrefix, newWsSuffix] = leadingAndTrailingWs(insertion.value, segmenter);
-    if (startKeep) {
-      const commonWsPrefix = longestCommonPrefix(oldWsPrefix, newWsPrefix);
-      startKeep.value = replaceSuffix(startKeep.value, newWsPrefix, commonWsPrefix);
-      deletion.value = removePrefix(deletion.value, commonWsPrefix);
-      insertion.value = removePrefix(insertion.value, commonWsPrefix);
-    }
-    if (endKeep) {
-      const commonWsSuffix = longestCommonSuffix(oldWsSuffix, newWsSuffix);
-      endKeep.value = replacePrefix(endKeep.value, newWsSuffix, commonWsSuffix);
-      deletion.value = removeSuffix(deletion.value, commonWsSuffix);
-      insertion.value = removeSuffix(insertion.value, commonWsSuffix);
-    }
-  } else if (insertion) {
-    if (startKeep) {
-      const ws = leadingWs(insertion.value, segmenter);
-      insertion.value = insertion.value.substring(ws.length);
-    }
-    if (endKeep) {
-      const ws = leadingWs(endKeep.value, segmenter);
-      endKeep.value = endKeep.value.substring(ws.length);
-    }
-  } else if (startKeep && endKeep) {
-    const newWsFull = leadingWs(endKeep.value, segmenter), [delWsStart, delWsEnd] = leadingAndTrailingWs(deletion.value, segmenter);
-    const newWsStart = longestCommonPrefix(newWsFull, delWsStart);
-    deletion.value = removePrefix(deletion.value, newWsStart);
-    const newWsEnd = longestCommonSuffix(removePrefix(newWsFull, newWsStart), delWsEnd);
-    deletion.value = removeSuffix(deletion.value, newWsEnd);
-    endKeep.value = replacePrefix(endKeep.value, newWsFull, newWsEnd);
-    startKeep.value = replaceSuffix(startKeep.value, newWsFull, newWsFull.slice(0, newWsFull.length - newWsEnd.length));
-  } else if (endKeep) {
-    const endKeepWsPrefix = leadingWs(endKeep.value, segmenter);
-    const deletionWsSuffix = trailingWs(deletion.value, segmenter);
-    const overlap = maximumOverlap(deletionWsSuffix, endKeepWsPrefix);
-    deletion.value = removeSuffix(deletion.value, overlap);
-  } else if (startKeep) {
-    const startKeepWsSuffix = trailingWs(startKeep.value, segmenter);
-    const deletionWsPrefix = leadingWs(deletion.value, segmenter);
-    const overlap = maximumOverlap(startKeepWsSuffix, deletionWsPrefix);
-    deletion.value = removePrefix(deletion.value, overlap);
-  }
-}
-
-class WordsWithSpaceDiff extends Diff {
-  tokenize(value) {
-    const regex = new RegExp(`(\\r?\\n)|[${extendedWordChars}]+|[^\\S\\n\\r]+|[^${extendedWordChars}]`, "ug");
-    return value.match(regex) || [];
-  }
-}
-var wordsWithSpaceDiff = new WordsWithSpaceDiff;
-function diffWordsWithSpace(oldStr, newStr, options) {
-  return wordsWithSpaceDiff.diff(oldStr, newStr, options);
-}
-// node_modules/diff/libesm/diff/array.js
-class ArrayDiff extends Diff {
-  tokenize(value) {
-    return value.slice();
-  }
-  join(value) {
-    return value;
-  }
-  removeEmpty(value) {
-    return value;
-  }
-}
-var arrayDiff = new ArrayDiff;
-function diffArrays(oldArr, newArr, options) {
-  return arrayDiff.diff(oldArr, newArr, options);
-}
-// src/diff-engine.ts
-var PAGE_ROWS = 100;
-var ROW_CHARACTERS = 1024;
-var WORD_DIFF_CHARACTERS = 256000;
-var WORD_DIFF_MS = 80;
-var WORD_DIFF_MIN_COMMON = 0.2;
-
-class TextIndex {
-  text;
-  starts;
-  lines;
-  columns;
-  constructor(text) {
-    this.text = text;
-    const scan = (visit) => {
-      let row = 0, position = 0, line = 1, lineStart = 0, newline = text.indexOf(`
-`);
-      visit?.(0, 0, 1, 1);
-      while (position < text.length) {
-        let end = Math.min(text.length, position + ROW_CHARACTERS, newline < 0 ? Infinity : newline + 1);
-        if (end < text.length && (text.charCodeAt(end - 1) === 13 && text.charCodeAt(end) === 10 || text.charCodeAt(end - 1) >= 55296 && text.charCodeAt(end - 1) <= 56319 && text.charCodeAt(end) >= 56320 && text.charCodeAt(end) <= 57343))
-          end--;
-        if (end === newline + 1) {
-          line++;
-          lineStart = end;
-          newline = text.indexOf(`
-`, end);
-        }
-        position = end;
-        if (++row > 2000000)
-          throw new Error("This message exceeds two million display fragments. Split it into smaller prompt messages to inspect its diff.");
-        visit?.(row, position, line, position - lineStart + 1);
-      }
-      return row + 1;
-    };
-    const count = scan();
-    this.starts = new Uint32Array(count);
-    this.lines = new Uint32Array(count);
-    this.columns = new Uint32Array(count);
-    scan((row, offset, line, column) => {
-      this.starts[row] = offset;
-      this.lines[row] = line;
-      this.columns[row] = column;
-    });
-  }
-  at(offset) {
-    let low = 0, high = this.starts.length - 1;
-    while (low < high) {
-      const mid = Math.ceil((low + high) / 2);
-      if (this.starts[mid] <= offset)
-        low = mid;
-      else
-        high = mid - 1;
-    }
-    return low;
-  }
-  location(offset) {
-    const index = this.at(offset), line = this.lines[index];
-    return { line, column: this.columns[index] + offset - this.starts[index] };
-  }
-  count(start, end) {
-    return end <= start ? 0 : this.at(end - 1) - this.at(start) + 1;
-  }
-  range(start, end, row) {
-    const index = this.at(start) + row;
-    return [Math.max(start, this.starts[index]), Math.min(end, this.starts[index + 1])];
-  }
-}
-function tokens(text) {
-  const result = [];
-  let start = 0, newline = text.indexOf(`
-`);
-  while (start < text.length) {
-    if (result.length >= 200000)
-      return;
-    let end = Math.min(text.length, start + ROW_CHARACTERS, newline < 0 ? Infinity : newline + 1);
-    if (end < text.length && (text.charCodeAt(end - 1) === 13 && text.charCodeAt(end) === 10 || text.charCodeAt(end - 1) >= 55296 && text.charCodeAt(end - 1) <= 56319 && text.charCodeAt(end) >= 56320 && text.charCodeAt(end) <= 57343))
-      end--;
-    if (end === newline + 1)
-      newline = text.indexOf(`
-`, end);
-    result.push(text.slice(start, end));
-    start = end;
-  }
-  return result;
-}
-
-class DiffPlan {
-  before;
-  after;
-  sections = [];
-  total;
-  note;
-  constructor(oldText, newText) {
-    this.before = new TextIndex(oldText);
-    this.after = new TextIndex(newText);
-    let prefix = 0, suffix = 0;
-    const min = Math.min(oldText.length, newText.length);
-    while (prefix < min && oldText.charCodeAt(prefix) === newText.charCodeAt(prefix))
-      prefix++;
-    while (suffix < min - prefix && oldText.charCodeAt(oldText.length - suffix - 1) === newText.charCodeAt(newText.length - suffix - 1))
-      suffix++;
-    if (oldText !== newText) {
-      const lineStart = prefix ? oldText.lastIndexOf(`
-`, prefix - 1) + 1 : 0;
-      if (prefix - lineStart <= ROW_CHARACTERS)
-        prefix = lineStart;
-      const end = oldText.length - suffix, newline = oldText.indexOf(`
-`, end);
-      if (newline >= 0 && newline + 1 - end <= ROW_CHARACTERS)
-        suffix = oldText.length - newline - 1;
-      else if (suffix <= ROW_CHARACTERS)
-        suffix = 0;
-    }
-    const split = (s, n) => n > 0 && n < s.length && (s.charCodeAt(n - 1) === 13 && s.charCodeAt(n) === 10 || s.charCodeAt(n - 1) >= 55296 && s.charCodeAt(n - 1) <= 56319 && s.charCodeAt(n) >= 56320 && s.charCodeAt(n) <= 57343);
-    if (split(oldText, prefix) || split(newText, prefix))
-      prefix--;
-    if (split(oldText, oldText.length - suffix) || split(newText, newText.length - suffix))
-      suffix--;
-    const runs = [];
-    if (prefix)
-      runs.push({ kind: "equal", start: 0, end: prefix, other: 0 });
-    const oldMiddle = oldText.slice(prefix, oldText.length - suffix), newMiddle = newText.slice(prefix, newText.length - suffix);
-    const oldTokens = tokens(oldMiddle), newTokens = tokens(newMiddle);
-    const parts = oldTokens && newTokens && oldTokens.length + newTokens.length <= 200000 ? diffArrays(oldTokens, newTokens, { timeout: 80, maxEditLength: 1000 }) : undefined;
-    let a = prefix, b = prefix;
-    if (parts)
-      for (const part of parts) {
-        const length = part.value.reduce((n, token) => n + token.length, 0);
-        if (!length)
-          continue;
-        if (part.added) {
-          runs.push({ kind: "add", start: b, end: b + length, other: a });
-          b += length;
-        } else if (part.removed) {
-          runs.push({ kind: "remove", start: a, end: a + length, other: b });
-          a += length;
-        } else {
-          runs.push({ kind: "equal", start: a, end: a + length, other: b });
-          a += length;
-          b += length;
-        }
-      }
-    else {
-      if (oldMiddle.length)
-        runs.push({ kind: "remove", start: prefix, end: oldText.length - suffix, other: prefix });
-      if (newMiddle.length)
-        runs.push({ kind: "add", start: prefix, end: newText.length - suffix, other: prefix });
-      this.note = "This large changed region is shown as a replacement because detailed alignment reached its work limit. All text remains available in bounded pages; unchanged text inside this region may appear on both sides.";
-    }
-    if (suffix)
-      runs.push({ kind: "equal", start: oldText.length - suffix, end: oldText.length, other: newText.length - suffix });
-    for (let i = 0;i + 1 < runs.length; i++)
-      if (runs[i].kind === "remove" && runs[i + 1].kind === "add") {
-        runs[i].partner = runs[i + 1];
-        runs[i + 1].partner = runs[i];
-      }
-    let cursor = 0;
-    const add = (run, first, count, fold) => {
-      if (!count)
-        return;
-      this.sections.push({ run, first, count, fold, cursor });
-      cursor += fold ? 1 : count;
-    };
-    for (const [i, run] of runs.entries()) {
-      const count = this.index(run).count(run.start, run.end);
-      if (run.kind !== "equal") {
-        add(run, 0, count, false);
-        continue;
-      }
-      const head = i ? Math.min(3, count) : 0;
-      const tail = i < runs.length - 1 ? Math.min(3, count - head) : 0;
-      add(run, 0, head, false);
-      add(run, head, count - head - tail, true);
-      add(run, count - tail, tail, false);
-    }
-    this.total = cursor;
-  }
-  index(run) {
-    return run.kind === "add" ? this.after : this.before;
-  }
-  wordChanges(run) {
-    if (run.changed !== undefined)
-      return run.changed;
-    const partner = run.partner;
-    if (!partner)
-      return run.changed = null;
-    const removed = run.kind === "remove" ? run : partner, added = run.kind === "remove" ? partner : run;
-    removed.changed = added.changed = null;
-    const oldText = this.before.text.slice(removed.start, removed.end), newText = this.after.text.slice(added.start, added.end);
-    if (oldText.length > WORD_DIFF_CHARACTERS || newText.length > WORD_DIFF_CHARACTERS)
-      return null;
-    const parts = diffWordsWithSpace(oldText, newText, { timeout: WORD_DIFF_MS });
-    if (!parts)
-      return null;
-    const oldRanges = [], newRanges = [];
-    let a = removed.start, b = added.start, common = 0;
-    const push = (ranges, text, start, end) => {
-      const last = ranges.at(-1);
-      if (last && /^[ \t]{0,2}$/.test(text.slice(last[1], start)))
-        last[1] = end;
-      else
-        ranges.push([start, end]);
-    };
-    for (const part of parts) {
-      const size = part.value.length;
-      if (part.removed) {
-        push(oldRanges, this.before.text, a, a + size);
-        a += size;
-      } else if (part.added) {
-        push(newRanges, this.after.text, b, b + size);
-        b += size;
-      } else {
-        common += size;
-        a += size;
-        b += size;
-      }
-    }
-    if (common / Math.max(oldText.length, newText.length, 1) < WORD_DIFF_MIN_COMMON)
-      return null;
-    removed.changed = oldRanges;
-    added.changed = newRanges;
-    return run.changed;
-  }
-  spans(run, text, start, end) {
-    const ranges = this.wordChanges(run);
-    if (!ranges?.length)
-      return;
-    let low = 0, high = ranges.length;
-    while (low < high) {
-      const mid = low + high >> 1;
-      if (ranges[mid][1] <= start)
-        low = mid + 1;
-      else
-        high = mid;
-    }
-    const result = [];
-    for (let i = low;i < ranges.length && ranges[i][0] < end; i++)
-      result.push([Math.max(ranges[i][0], start) - start, Math.min(ranges[i][1], end) - start]);
-    const visible = text.replace(/\r?\n$/, "").length;
-    if (!result.length || result.length === 1 && result[0][0] === 0 && result[0][1] >= visible)
-      return;
-    return result;
-  }
-  row(section, row) {
-    const { run } = section, index = this.index(run);
-    const [start, end] = index.range(run.start, run.end, section.first + row), location = index.location(start);
-    const next = run.kind === "equal" ? this.after.location(run.other + start - run.start) : location;
-    const text = index.text.slice(start, end), spans = run.kind === "equal" ? undefined : this.spans(run, text, start, end);
-    return {
-      kind: run.kind,
-      text,
-      ...spans ? { spans } : {},
-      ...run.kind !== "add" ? { oldLine: location.line, oldColumn: location.column } : {},
-      ...run.kind !== "remove" ? { newLine: next.line, newColumn: next.column } : {}
-    };
-  }
-  page(cursor = 0, fold, limit = PAGE_ROWS) {
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > PAGE_ROWS)
-      throw new Error("Invalid diff page size.");
-    if (!Number.isSafeInteger(cursor) || cursor < 0)
-      throw new Error("Invalid diff page.");
-    const selected = fold === undefined ? undefined : this.sections[fold];
-    if (fold !== undefined && (!selected || !selected.fold))
-      throw new Error("This context section is unavailable.");
-    const total = selected ? selected.count : this.total;
-    if (cursor > Math.max(0, total - 1))
-      throw new Error("This diff page is outside the available range.");
-    const items = [];
-    const end = Math.min(total, cursor + limit);
-    if (selected)
-      for (let i = cursor;i < end; i++)
-        items.push(this.row(selected, i));
-    else
-      for (const [id, section] of this.sections.entries()) {
-        if (section.cursor >= end)
-          break;
-        const size = section.fold ? 1 : section.count;
-        if (section.cursor + size <= cursor)
-          continue;
-        if (section.fold) {
-          const index = this.index(section.run), [start] = index.range(section.run.start, section.run.end, section.first);
-          const [, finish] = index.range(section.run.start, section.run.end, section.first + section.count - 1);
-          items.push({ kind: "fold", id, rows: section.count, characters: finish - start });
-        } else
-          for (let i = Math.max(0, cursor - section.cursor);i < Math.min(section.count, end - section.cursor); i++)
-            items.push(this.row(section, i));
-      }
-    return {
-      items,
-      cursor,
-      total,
-      ...end < total ? { next: end } : {},
-      ...cursor ? { previous: Math.max(0, cursor - limit) } : {},
-      ...!selected ? { note: this.note, nextChange: this.sections.find((s) => !s.fold && s.run.kind !== "equal" && s.cursor >= end)?.cursor } : {}
-    };
-  }
-}
-
-// src/prompt-store.ts
-var LIMIT = 256000000;
-var TTL = 30 * 60000;
-var integer = (value, fallback = 0) => {
-  if (value === undefined)
-    return fallback;
-  if (!Number.isSafeInteger(value) || value < 0)
-    throw new Error("Invalid prompt page.");
-  return value;
-};
-function alignMessages(a, b) {
-  const hash = (m) => createHash2("sha256").update(m.header).update("\x00").update(m.body).digest("hex");
-  const parts = diffArrays(a.map(hash), b.map(hash), { timeout: 60, maxEditLength: 1000 });
-  const pairs = [];
-  if (!parts) {
-    for (let i = 0;i < Math.max(a.length, b.length); i++)
-      pairs.push([i < a.length ? i : undefined, i < b.length ? i : undefined]);
-    return { pairs, aligned: false };
-  }
-  let ai = 0, bi = 0, removed = [], added = [];
-  const flush = () => {
-    for (let i = 0;i < Math.max(removed.length, added.length); i++)
-      pairs.push([removed[i], added[i]]);
-    removed = [];
-    added = [];
-  };
-  for (const part of parts) {
-    if (part.removed) {
-      for (let i = 0;i < part.value.length; i++)
-        removed.push(ai++);
-    } else if (part.added) {
-      for (let i = 0;i < part.value.length; i++)
-        added.push(bi++);
-    } else {
-      flush();
-      for (let i = 0;i < part.value.length; i++)
-        pairs.push([ai++, bi++]);
-    }
-  }
-  flush();
-  return { pairs, aligned: true };
-}
-
-class PromptStore {
-  snapshots = new Map;
-  plans = new Map;
-  references = new WeakMap;
-  lists = new Map;
-  prune() {
-    for (const [key, value] of this.snapshots)
-      if (value.touched < Date.now() - TTL)
-        this.snapshots.delete(key);
-    for (const [key, value] of this.plans)
-      if (value.touched < Date.now() - TTL)
-        this.plans.delete(key);
-    let size = [...this.snapshots.values()].reduce((n, value) => n + value.size, 0);
-    while (size > LIMIT || this.snapshots.size > 128) {
-      const [key, value] = this.snapshots.entries().next().value;
-      this.snapshots.delete(key);
-      size -= value.size;
-    }
-    let planSize = [...this.plans.values()].reduce((n, value) => n + value.size, 0);
-    while (this.plans.size > 12 || planSize > 192000000) {
-      const [key, value] = this.plans.entries().next().value;
-      this.plans.delete(key);
-      planSize -= value.size;
-    }
-    if (this.lists.size > 64)
-      this.lists.delete(this.lists.keys().next().value);
-  }
-  expose(snapshot, user, session) {
-    let reference = this.references.get(snapshot), stored = reference ? this.snapshots.get(reference) : undefined;
-    if (!stored || stored.user !== user || stored.session !== session) {
-      reference = crypto.randomUUID();
-      stored = { user, session, snapshot, size: snapshot.messages.reduce((n, m) => n + m.body.length + m.header.length, 0), touched: Date.now() };
-      this.references.set(snapshot, reference);
-      this.snapshots.set(reference, stored);
-    } else {
-      stored.touched = Date.now();
-      this.snapshots.delete(reference);
-      this.snapshots.set(reference, stored);
-    }
-    this.prune();
-    return { at: snapshot.at, route: snapshot.route, model: snapshot.model, messages: [], reference, messageCount: snapshot.messages.length };
-  }
-  pack(value, user, session) {
-    if (!value || typeof value !== "object")
-      return value;
-    if (Array.isArray(value))
-      return value.map((item) => this.pack(item, user, session));
-    const object = value;
-    if (Array.isArray(object.messages) && typeof object.route === "string" && typeof object.at === "number")
-      return this.expose(value, user, session);
-    return Object.fromEntries(Object.entries(object).map(([key, item]) => [key, this.pack(item, user, session)]));
-  }
-  get(id, user, session) {
-    this.prune();
-    const value = this.snapshots.get(id);
-    if (!value || value.user !== user || value.session !== session)
-      throw new Error("This prompt view expired or belongs to another browser. Refresh the live check or rerun the simulation.");
-    value.touched = Date.now();
-    this.snapshots.delete(id);
-    this.snapshots.set(id, value);
-    return value.snapshot;
-  }
-  list(user, session, input) {
-    const before = input.before ? this.get(input.before, user, session) : undefined, after = this.get(input.after, user, session);
-    const key = JSON.stringify([input.before, input.after, !!input.includeUnchanged]);
-    let list = this.lists.get(key);
-    if (!list) {
-      const a = before?.messages ?? [], b = after.messages, alignment = alignMessages(a, b);
-      const items = [];
-      let unchanged = 0;
-      const add = (oldIndex, newIndex) => {
-        const old = oldIndex === undefined ? undefined : a[oldIndex], next = newIndex === undefined ? undefined : b[newIndex];
-        const same = !!old && !!next && old.header === next.header && old.body === next.body;
-        if (same)
-          unchanged++;
-        if (!same || input.includeUnchanged)
-          items.push({
-            oldIndex,
-            newIndex,
-            role: next?.role ?? old.role,
-            kind: same ? "unchanged" : !old ? "added" : !next ? "removed" : "changed",
-            headerChanged: !!old && !!next && old.header !== next.header
-          });
-      };
-      for (const [oldIndex, newIndex] of alignment.pairs)
-        add(oldIndex, newIndex);
-      list = { items, unchanged, ...!alignment.aligned ? { note: "Message alignment reached its work limit; messages are compared by position." } : {} };
-      this.lists.set(key, list);
-    }
-    const cursor = integer(input.cursor), total = list.items.length;
-    if (cursor > Math.max(total - 1, 0))
-      throw new Error("This message page is outside the available range.");
-    return {
-      items: list.items.slice(cursor, cursor + 20),
-      total,
-      unchanged: list.unchanged,
-      cursor,
-      note: list.note,
-      ...cursor + 20 < total ? { next: cursor + 20 } : {},
-      ...cursor ? { previous: Math.max(0, cursor - 20) } : {}
-    };
-  }
-  open(user, session, input, pageRows = 100) {
-    const before = input.before ? this.get(input.before, user, session) : undefined, after = this.get(input.after, user, session);
-    const read = (snapshot, index) => {
-      if (index === undefined)
-        return "";
-      const message = snapshot?.messages[integer(index)];
-      if (!message)
-        throw new Error("This prompt message is unavailable.");
-      return input.part === "header" ? message.header : message.body;
-    };
-    const oldText = read(before, input.oldIndex), newText = read(after, input.newIndex);
-    const plan = new DiffPlan(oldText, newText), id = crypto.randomUUID();
-    this.plans.set(id, { user, session, plan, touched: Date.now(), size: (oldText.length + newText.length) * 2 + plan.before.starts.byteLength * 3 + plan.after.starts.byteLength * 3 });
-    this.prune();
-    return { id, page: plan.page(0, undefined, pageRows) };
-  }
-  page(user, session, input) {
-    this.prune();
-    const stored = this.plans.get(input.id);
-    if (!stored || stored.user !== user || stored.session !== session)
-      throw new Error("This diff view expired. Close and reopen the message to load it again.");
-    stored.touched = Date.now();
-    this.plans.delete(input.id);
-    this.plans.set(input.id, stored);
-    return stored.plan.page(integer(input.cursor), input.fold === undefined ? undefined : integer(input.fold), input.limit);
-  }
-}
-
-// src/health/timeline.ts
-var MAX_PARTS = 16;
-var MIN_SEARCH = 8;
-function normalizedHistory(message) {
-  const flags = message;
-  const history = flags.__isChatHistory === true || flags.__chatHistorySource === true;
-  return {
-    role: message.role,
-    content: message.content,
-    name: message.name,
-    ...history ? { __isChatHistory: true } : {},
-    ...flags.sourceMessageId ?? flags.__sourceMessageId ? { sourceMessageId: flags.sourceMessageId ?? flags.__sourceMessageId } : {},
-    ...(flags.sourceIndexInChat ?? flags.__sourceIndexInChat) !== undefined ? { sourceIndexInChat: flags.sourceIndexInChat ?? flags.__sourceIndexInChat } : {}
-  };
-}
-function entryKind(entry, injected) {
-  if (entry.type === "world_info")
-    return "world";
-  if (["long_term_memory", "databank", "databank_mention"].includes(entry.type))
-    return "memory";
-  if (entry.type === "extension" || entry.extensionId)
-    return "extension";
-  if (entry.marker === "persona_description")
-    return "persona";
-  if (["char_description", "char_personality", "scenario", "dialogue_examples", "jailbreak"].includes(entry.marker ?? ""))
-    return "character";
-  return injected || ["authors_note", "utility"].includes(entry.type) ? "injection" : "system";
-}
-var RANK = { world: 0, memory: 0, extension: 0, persona: 1, character: 1, injection: 2, system: 2, story: 3, other: 3 };
-function free(start, end, covered) {
-  const result = [];
-  let cursor = start;
-  for (const [from, to] of covered) {
-    if (to <= cursor || from >= end)
-      continue;
-    if (from > cursor)
-      result.push([cursor, from]);
-    cursor = Math.max(cursor, to);
-  }
-  if (cursor < end)
-    result.push([cursor, end]);
-  return result;
-}
-function clean(text, size) {
-  const value = text.replace(/\s+/g, " ").trim();
-  return value.length > size ? `${value.slice(0, size - 1)}\u2026` : value;
-}
-function promptOutline(snapshot, messages, breakdown) {
-  const flags = messages, history = (m) => m?.__isChatHistory === true || m?.__chatHistorySource === true;
-  const firstHistory = flags.findIndex(history);
-  const entries = breakdown.filter((entry) => entry.type !== "chat_history" && entry.content?.trim()).map((entry) => ({ entry, text: entry.content.trim() }));
-  return snapshot.messages.map((message, index) => {
-    const source = flags[index], { body: text, role } = message;
-    const base = { role, preview: clean(text, 110), characters: text.length };
-    if (history(source)) {
-      const label = clean(source.name || (role === "user" ? "User" : role === "assistant" ? "Assistant" : "System"), 60);
-      const chatIndex = source.sourceIndexInChat ?? source.__sourceIndexInChat;
-      return { ...base, kind: "story", label, injected: false, ...chatIndex !== undefined ? { chatIndex } : {}, parts: [{ kind: "story", label, start: 0, end: text.length }] };
-    }
-    const injected = firstHistory >= 0 && index > firstHistory;
-    const fallback = source?.__worldInfoSource ? "world" : injected ? "injection" : "system";
-    const parts = [], covered = [];
-    const ranked = entries.map((item) => ({ ...item, kind: entryKind(item.entry, injected) })).sort((a, b) => RANK[a.kind] - RANK[b.kind] || b.text.length - a.text.length);
-    for (const { entry, text: content, kind } of ranked) {
-      if (content.length < MIN_SEARCH && content !== text.trim())
-        continue;
-      const start = text.indexOf(content);
-      if (start < 0)
-        continue;
-      const label = clean(entry.extensionName && kind === "extension" ? `${entry.extensionName}: ${entry.name}` : entry.name, 120);
-      for (const [from, to] of free(start, start + content.length, covered)) {
-        parts.push({ kind, label, start: from, end: to });
-        covered.push([from, to]);
-      }
-      covered.sort((a, b) => a[0] - b[0]);
-    }
-    for (const [from, to] of free(0, text.length, covered))
-      if (text.slice(from, to).trim())
-        parts.push({ kind: fallback, label: fallback === "world" ? "World info" : injected ? "Injected text" : "Prompt text", start: from, end: to });
-    parts.sort((a, b) => a.start - b.start);
-    const merged = [];
-    for (const part of parts) {
-      const last = merged.at(-1);
-      if (last?.label === part.label && last.kind === part.kind)
-        last.end = part.end;
-      else
-        merged.push({ ...part });
-    }
-    const bounded = merged.length > MAX_PARTS ? [...merged.slice(0, MAX_PARTS - 1), { ...merged[MAX_PARTS - 1], end: merged.at(-1).end, label: `${merged.length - MAX_PARTS + 1} more sources` }] : merged;
-    const largest = [...bounded].sort((a, b) => b.end - b.start - (a.end - a.start))[0];
-    const names = new Set(bounded.map((part) => part.label));
-    return {
-      ...base,
-      kind: largest?.kind ?? fallback,
-      injected,
-      parts: bounded,
-      label: largest ? `${largest.label}${names.size > 1 ? ` +${names.size - 1}` : ""}` : "Empty message"
-    };
-  });
-}
-function changedRange(before, after) {
-  const end = Math.min(before.length, after.length);
-  let prefix = 0, suffix = 0;
-  while (prefix < end && before.charCodeAt(prefix) === after.charCodeAt(prefix))
-    prefix++;
-  while (suffix < end - prefix && before.charCodeAt(before.length - suffix - 1) === after.charCodeAt(after.length - suffix - 1))
-    suffix++;
-  return { before: [prefix, Math.max(prefix + 1, before.length - suffix)], after: [prefix, Math.max(prefix + 1, after.length - suffix)] };
-}
-var touched = (turn, [from, to]) => (turn?.parts ?? []).filter((part) => part.start < to && part.end > from).map((part) => part.label);
-function buildTimeline(before, beforeOutline, after, afterOutline, comparison, tolerated = false) {
-  const rows = [];
-  const row = (status, oldIndex, newIndex, root, sources, headerChanged = false) => {
-    const turn = newIndex !== undefined ? afterOutline[newIndex] : beforeOutline?.[oldIndex], total = Math.max(1, turn.characters);
-    const names = [...new Set(sources)], culprit = status === "changed" ? turn.parts.find((part) => part.label === names[0]) : undefined;
-    const kind = culprit?.kind ?? turn.kind, label = culprit ? `${culprit.label}${names.length > 1 ? ` +${names.length - 1}` : ""}` : turn.label;
-    rows.push({
-      ...oldIndex !== undefined ? { oldIndex } : {},
-      ...newIndex !== undefined ? { newIndex } : {},
-      status,
-      ...root ? { root } : {},
-      role: turn.role,
-      kind,
-      label,
-      preview: turn.preview,
-      characters: turn.characters,
-      injected: turn.injected,
-      ...turn.chatIndex !== undefined ? { chatIndex: turn.chatIndex } : {},
-      headerChanged,
-      parts: turn.parts.map((part) => ({ kind: part.kind, label: part.label, share: (part.end - part.start) / total })),
-      sources: [...new Set(sources)]
-    });
-  };
-  if (!before)
-    afterOutline.forEach((turn, index) => row("base", undefined, index, false, turn.parts.map((part) => part.label)));
-  else {
-    const { pairs } = alignMessages(before.messages, after.messages);
-    let broken = comparison.routeChanged, consumed = 0;
-    for (const [oldIndex, newIndex] of pairs) {
-      if (oldIndex !== undefined)
-        consumed++;
-      const old = oldIndex === undefined ? undefined : before.messages[oldIndex], next = newIndex === undefined ? undefined : after.messages[newIndex];
-      if (old && next && old.header === next.header && old.body === next.body) {
-        row(broken ? "rewritten" : "kept", oldIndex, newIndex, false, []);
-        continue;
-      }
-      if (old && next) {
-        const range = changedRange(old.body, next.body), sources = [...touched(beforeOutline?.[oldIndex], range.before), ...touched(afterOutline[newIndex], range.after)];
-        if (!broken && consumed === before.messages.length && old.header === next.header && next.body.startsWith(old.body)) {
-          row("new", oldIndex, newIndex, false, sources);
-          continue;
-        }
-        row("changed", oldIndex, newIndex, !broken, sources, old.header !== next.header);
-        broken = true;
-        continue;
-      }
-      if (next) {
-        const sources = afterOutline[newIndex].parts.map((part) => part.label);
-        if (consumed === before.messages.length) {
-          row("new", undefined, newIndex, false, sources);
-          continue;
-        }
-        row("added", undefined, newIndex, !broken, sources);
-        broken = true;
-        continue;
-      }
-      row("removed", oldIndex, undefined, !broken, (beforeOutline?.[oldIndex].parts ?? []).map((part) => part.label));
-      broken = true;
-    }
-  }
-  const sum = (...statuses) => rows.filter((item) => statuses.includes(item.status) && item.newIndex !== undefined).reduce((n, item) => n + item.characters, 0);
-  return { rows, kept: sum("kept", "base"), rewritten: sum("rewritten", "changed", "added"), added: sum("new"), problems: rows.filter((item) => ["changed", "added", "removed"].includes(item.status)).length, tolerated, routeChanged: comparison.routeChanged };
-}
-
-// src/compare.ts
-import { createHash as createHash3 } from "crypto";
-var MAX_PROMPT_CHARACTERS = 32000000;
-function stableJson(value) {
-  return JSON.stringify(value, (_key, part) => {
-    if (!part || typeof part !== "object" || Array.isArray(part))
-      return part;
-    return Object.fromEntries(Object.keys(part).sort().map((key) => [key, part[key]]));
-  });
-}
-function fingerprint(value) {
-  return value === undefined ? undefined : `[sha256:${createHash3("sha256").update(value).digest("hex")} \xB7 ${value.length} characters]`;
-}
-function inspectPart(value) {
-  const part = { ...value };
-  delete part.cache_control;
-  if (["image", "audio", "video"].includes(String(part.type)) && typeof part.data === "string")
-    part.data = fingerprint(part.data);
-  if (typeof part.thought_signature === "string")
-    part.thought_signature = fingerprint(part.thought_signature);
-  return part;
-}
-function commonPrefix(a, b) {
-  const end = Math.min(a.length, b.length);
-  let i = 0;
-  while (i < end && a.charCodeAt(i) === b.charCodeAt(i))
-    i++;
-  return i;
-}
-function snapshot(messages, context) {
-  const route = context.mainDispatch.descriptor;
-  const normalized = [];
-  let size = 0;
-  for (const message of messages) {
-    const wire = message;
-    const header = stableJson({
-      role: message.role,
-      name: message.name,
-      contentKind: typeof message.content === "string" ? "text" : "parts",
-      thought_signature: fingerprint(wire.thought_signature),
-      reasoning_content: message.reasoning_content,
-      thinking_blocks: message.thinking_blocks?.map((block) => ({ ...block, data: fingerprint(block.data), signature: fingerprint(block.signature) })),
-      reasoning_details: message.reasoning_details
-    });
-    const body = typeof message.content === "string" ? message.content : stableJson(message.content.map(inspectPart));
-    size += header.length + body.length;
-    if (size > MAX_PROMPT_CHARACTERS)
-      throw new Error("LumiCache cannot inspect prompts larger than 32 million characters. Turn monitoring off in LumiCache to send this request.");
-    normalized.push({ role: message.role, header, body });
-  }
-  return { at: Date.now(), model: route?.model ?? "Unresolved connection", route: stableJson(route ? {
-    connectionId: route.connectionId,
-    provider: route.provider,
-    model: route.model,
-    endpointOrigin: route.endpointOrigin,
-    revision: route.connectionDispatchRevision
-  } : { dispatchKind: context.mainDispatch.dispatchKind, revision: context.mainDispatch.connectionDispatchRevision }), messages: normalized };
-}
-function compare(before, after) {
-  const result = {
-    kind: "first",
-    routeChanged: false,
-    firstMessage: null,
-    commonMessages: 0,
-    commonCharacters: 0,
-    previousCharacters: before?.messages.reduce((n, m) => n + m.body.length, 0) ?? 0,
-    summary: "First request. A baseline will be kept after generation completes successfully."
-  };
-  if (!before)
-    return result;
-  result.routeChanged = before.route !== after.route;
-  let extended = false;
-  for (let index = 0;index < before.messages.length; index++) {
-    const old = before.messages[index], next = after.messages[index];
-    if (!next || old.header !== next.header) {
-      result.firstMessage = index;
-      break;
-    }
-    const prefix = commonPrefix(old.body, next.body);
-    result.commonCharacters += prefix;
-    if (old.body === next.body) {
-      result.commonMessages++;
-      continue;
-    }
-    if (index === before.messages.length - 1 && prefix === old.body.length) {
-      extended = true;
-      break;
-    }
-    result.firstMessage = index;
-    break;
-  }
-  if (result.routeChanged || result.firstMessage !== null) {
-    result.kind = "break";
-    result.summary = result.routeChanged ? "The connection, model or connection configuration changed." : `The previous prompt prefix changes at message ${result.firstMessage + 1} (${before.messages[result.firstMessage].role}).`;
-  } else {
-    result.kind = extended || after.messages.length > before.messages.length ? "append" : "same";
-    result.summary = result.kind === "append" ? "The previous prompt prefix is unchanged; new content follows it." : "The assembled prompt is unchanged.";
-  }
-  return result;
-}
-
-// src/shared.ts
-var DEFAULT_ACCEPTABLE_DEPTH = 2;
-var DEFAULT_SETTINGS = {
-  mode: "warn",
-  acceptableDepth: null,
-  acceptableTokens: null,
-  forceConsistency: false,
-  overflowPlacement: "end",
-  refreshEnabled: true,
-  refreshEvery: 20,
-  autoRefreshEnabled: false,
-  autoRefreshMinutes: 10,
-  autoRefreshLimit: 3,
-  hiddenCategories: []
-};
-var COVERAGE = "Compares assembled prompts before sending. Later host/provider changes, tools, cache expiry and provider cache state are not visible here. This is a cache-risk check, not a confirmed cache hit or miss.";
-function errorText(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-// src/settings.ts
-var FILE = "settings.json";
-var SETTINGS_VERSION = 1;
-function saveSettings(storage, user, settings) {
-  return storage.setJson(FILE, { ...settings, settingsVersion: SETTINGS_VERSION }, { userId: user });
-}
-async function loadSettings(storage, user) {
-  const saved = await storage.getJson(FILE, { fallback: null, userId: user });
-  if (!saved)
-    return validateSettings(DEFAULT_SETTINGS);
-  if (saved.settingsVersion)
-    return validateSettings(saved);
-  const migrated = validateSettings(saved.acceptableDepth === 5 ? { ...saved, acceptableDepth: null } : saved);
-  try {
-    await saveSettings(storage, user, migrated);
-  } catch (error) {
-    console.warn("[LumiCache] Could not save migrated settings:", error);
-  }
-  return migrated;
-}
-function validateSettings(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid cache settings.");
-  const v = value;
-  const result = { ...DEFAULT_SETTINGS, ...v };
-  if (!["pause", "warn", "off"].includes(result.mode))
-    throw new Error("Choose Pause, Warn or Off for LumiCache.");
-  for (const [key, max] of [["acceptableDepth", 1e5], ["acceptableTokens", 2000000], ["refreshEvery", 1e5], ["autoRefreshMinutes", 1440], ["autoRefreshLimit", 1000]]) {
-    const n = result[key];
-    const required = key !== "acceptableDepth" && key !== "acceptableTokens";
-    if (!required && n === null)
-      continue;
-    if (typeof n !== "number" || !Number.isInteger(n) || n < (required ? 1 : 0) || n > max)
-      throw new Error(`Invalid ${key}: enter a whole number${required ? " greater than zero" : " or leave the limit blank"}.`);
-  }
-  for (const key of ["forceConsistency", "refreshEnabled", "autoRefreshEnabled"])
-    if (typeof result[key] !== "boolean")
-      throw new Error(`Invalid ${key}.`);
-  if (!["end", "boundary"].includes(result.overflowPlacement))
-    throw new Error("Choose a valid injection destination.");
-  if (!Array.isArray(result.hiddenCategories) || result.hiddenCategories.some((k) => !["risk", "issue", "depth", "variabled"].includes(k)))
-    throw new Error("Invalid category filters.");
-  return {
-    mode: result.mode,
-    acceptableDepth: result.acceptableDepth,
-    acceptableTokens: result.acceptableTokens,
-    forceConsistency: result.forceConsistency,
-    overflowPlacement: result.overflowPlacement,
-    refreshEnabled: result.refreshEnabled,
-    refreshEvery: result.refreshEvery,
-    autoRefreshEnabled: result.autoRefreshEnabled,
-    autoRefreshMinutes: result.autoRefreshMinutes,
-    autoRefreshLimit: result.autoRefreshLimit,
-    hiddenCategories: [...new Set(result.hiddenCategories)]
-  };
-}
-
-// src/consistency.ts
-var historyMessage = (m) => m.__isChatHistory === true;
-var identity = (m) => m.sourceMessageId;
-var wire = (m) => stableJson({ ...m, sourceMessageMetadata: undefined, sourceMessageId: undefined, sourceIndexInChat: undefined, __isChatHistory: undefined });
-function retain(messages) {
-  let size = 0;
-  const result = messages.map((m) => {
-    const copy = { ...m };
-    delete copy.sourceMessageMetadata;
-    size += stableJson(copy).length;
-    if (size > MAX_PROMPT_CHARACTERS)
-      throw new Error("The prompt exceeds LumiCache's retention limit. Reset the baseline or turn monitoring off.");
-    return structuredClone(copy);
-  });
-  return { messages: result, size };
-}
-async function tailStart(messages, policy, context, count) {
-  const indices = messages.flatMap((m, i) => historyMessage(m) ? [i] : []);
-  if (!indices.length)
-    return { index: messages.length, approximate: false };
-  const depth = policy.acceptableDepth ?? DEFAULT_ACCEPTABLE_DEPTH;
-  let index = depth === 0 ? messages.length : indices[Math.max(0, indices.length - depth)];
-  let approximate = false;
-  if (policy.acceptableTokens !== null) {
-    if (!count)
-      throw new Error("The host token counter is unavailable. Leave the token limit blank to use message depth.");
-    const candidates = [...indices.filter((i) => i >= index), messages.length];
-    let lo = 0, hi = candidates.length - 1;
-    while (lo < hi) {
-      context.signal.throwIfAborted();
-      const mid = Math.floor((lo + hi) / 2);
-      const result = await count(messages.slice(candidates[mid]).filter(historyMessage), context);
-      approximate ||= result.approximate;
-      if (!Number.isFinite(result.total_tokens) || result.total_tokens < 0)
-        throw new Error("The host returned an invalid token count.");
-      if (result.total_tokens <= policy.acceptableTokens)
-        hi = mid;
-      else
-        lo = mid + 1;
-    }
-    index = candidates[lo];
-  }
-  if (index < messages.length)
-    while (index > indices[0] && !historyMessage(messages[index - 1]))
-      index--;
-  return { index, approximate };
-}
-function keyed(messages) {
-  const occurrences = new Map;
-  return messages.filter(historyMessage).map((message) => {
-    const id = identity(message);
-    if (!id)
-      throw new Error("Force cache consistency needs source message IDs. Disable it for a prompt whose history identity was removed by another extension.");
-    const n = occurrences.get(id) ?? 0;
-    occurrences.set(id, n + 1);
-    return { key: `${id}:${n}`, message };
-  });
-}
-function historyUnchanged(before, after) {
-  try {
-    const a = keyed(before), b = new Map(keyed(after).map((x) => [x.key, x.message]));
-    return a.length > 0 && a.every((x) => b.has(x.key) && wire(x.message) === wire(b.get(x.key)));
-  } catch {
-    return false;
-  }
-}
-async function preserve(before, current, policy, context, count) {
-  const now = keyed(current), old = before ? keyed(before) : [];
-  const oldKeys = new Set(old.map((x) => x.key));
-  const maxOldIndex = old.reduce((max, x) => Math.max(max, x.message.sourceIndexInChat ?? -1), -1);
-  const added = now.filter((x) => !oldKeys.has(x.key) && (!old.length || x.message.sourceIndexInChat !== undefined && x.message.sourceIndexInChat > maxOldIndex));
-  if (old.length && now.some((x) => !oldKeys.has(x.key) && x.message.sourceIndexInChat === undefined))
-    throw new Error("Force cache consistency cannot order new history without source indexes.");
-  const ledger = before ? [...old, ...added] : now;
-  const first = current.findIndex(historyMessage);
-  const oldBoundary = before ? await tailStart(before, policy, context, count) : { index: 0, approximate: false };
-  const prefix = before ? before.slice(0, oldBoundary.index) : first < 0 ? [...current] : current.slice(0, first);
-  const frozen = new Set(keyed(prefix).map((x) => x.key));
-  const tail = ledger.filter((x) => !frozen.has(x.key));
-  const base = [...prefix, ...tail.map((x) => x.message)];
-  const boundary = await tailStart(base, policy, context, count);
-  const minimum = Math.max(prefix.length, boundary.index);
-  const baseIndices = new Map(base.map((m, i) => [m, i]));
-  const positions = new Map(ledger.map((x) => [x.key, baseIndices.get(x.message) ?? -1]));
-  const nowKeys = new Map(now.map((x) => [x.message, x.key]));
-  const injections = [];
-  let relocated = 0;
-  if (!(before && !added.length && oldBoundary.index === before.length)) {
-    let nextKey;
-    for (let i = current.length - 1;i > first && first >= 0; i--) {
-      const m = current[i];
-      if (historyMessage(m)) {
-        nextKey = nowKeys.get(m);
-        continue;
-      }
-      let index = nextKey ? positions.get(nextKey) ?? base.length : base.length;
-      if (index < minimum) {
-        index = policy.overflowPlacement === "end" ? base.length : minimum;
-        relocated++;
-      }
-      injections.push({ message: m, index, order: i });
-    }
-  }
-  injections.sort((a, b) => b.index - a.index || b.order - a.order);
-  for (const injection of injections)
-    base.splice(injection.index, 0, injection.message);
-  const currentByKey = new Map(now.map((x) => [x.key, x.message]));
-  const restored = before ? old.filter((x) => {
-    const m = currentByKey.get(x.key);
-    return !m || wire(m) !== wire(x.message);
-  }).length + Number(wireList(before.slice(0, before.findIndex(historyMessage) < 0 ? before.length : before.findIndex(historyMessage))) !== wireList(current.slice(0, first < 0 ? current.length : first))) : 0;
-  return { messages: base, restored, relocated, approximate: oldBoundary.approximate || boundary.approximate };
-}
-var wireList = (messages) => messages.map(wire).join(`
-`);
-
-// src/guard.ts
-class Guard {
-  onChange;
-  countTokens;
-  store;
-  toast;
-  chats = new Map;
-  pending = new Map;
-  candidates = new Map;
-  constructor(onChange, countTokens, store, toast) {
-    this.onChange = onChange;
-    this.countTokens = countTokens;
-    this.store = store;
-    this.toast = toast;
-  }
-  async toastBreak(messages, check, context, tone, title, message) {
-    if (!this.toast)
-      return;
-    const first = Math.max(0, Math.min(check.comparison.firstMessage ?? 0, messages.length - 1));
-    let tokens = Math.ceil(check.after.messages.slice(first).reduce((total, message) => total + message.body.length, 0) / 4), approximate = true;
-    if (this.countTokens) {
-      try {
-        const counted = await this.countTokens(messages.slice(first), context);
-        if (Number.isFinite(counted.total_tokens)) {
-          tokens = counted.total_tokens;
-          approximate = counted.approximate;
-        }
-      } catch {}
-    }
-    const who = context.label ? `${context.label}: ` : "";
-    try {
-      this.toast(context.userId, tone, `${who}${title(messages.length - first)}`, message(`${approximate ? "~" : ""}${tokens.toLocaleString("en-US")}`));
-    } catch (error) {
-      console.warn("[LumiCache] Could not show the cache toast:", error);
-    }
-  }
-  notify(user, chatId, session) {
-    try {
-      this.onChange(user, chatId, session);
-    } catch {}
-  }
-  disconnect(user, session) {
-    for (const pending of this.pending.values()) {
-      if (pending.userId !== user || pending.session !== session)
-        continue;
-      pending.session = undefined;
-      this.notify(user, pending.check.chatId);
-    }
-  }
-  chatStates(user, chat) {
-    return [...this.chats].filter(([key]) => {
-      const [owner, id] = JSON.parse(key);
-      return owner === user && id === chat;
-    });
-  }
-  shown(user, chat) {
-    const states = this.chatStates(user, chat).map(([, state]) => state);
-    return states.find((state) => state.check && this.pending.has(state.check.id)) ?? states.at(-1);
-  }
-  resume(user, chat, session) {
-    const check = this.shown(user, chat)?.check;
-    const pending = check && this.pending.get(check.id);
-    if (pending && pending.userId === user && !pending.session && Date.now() < pending.check.deadline)
-      pending.session = session;
-  }
-  reserve(current, next) {
-    const retained = () => {
-      const snapshots = new Set;
-      for (const state of this.chats.values()) {
-        const check = state === current ? next : state.check;
-        for (const value of [state.baseline, check?.before, check?.after])
-          if (value)
-            snapshots.add(value);
-      }
-      let size = 0;
-      for (const value of snapshots)
-        for (const message of value.messages)
-          size += message.header.length + message.body.length;
-      for (const state of this.chats.values())
-        size += (state.retained?.size ?? 0) + (state.candidate?.size ?? 0);
-      return size;
-    };
-    while (retained() > 256000000) {
-      const oldest = [...this.chats].find(([, state]) => state !== current && !state.busy);
-      if (!oldest)
-        throw new Error("LumiCache's active prompt memory is full. Finish or stop another generation before retrying.");
-      this.chats.delete(oldest[0]);
-    }
-  }
-  key(user, chat, scope) {
-    return JSON.stringify(scope ? [user, chat, scope] : [user, chat]);
-  }
-  state(user, chat, scope) {
-    const key = this.key(user, chat, scope);
-    let state = this.chats.get(key);
-    if (!state) {
-      if (this.chats.size >= 48) {
-        const oldest = [...this.chats].find(([, value]) => !value.busy);
-        if (!oldest)
-          throw new Error("LumiCache is inspecting too many chats. Finish a pending generation first.");
-        this.chats.delete(oldest[0]);
-      }
-      state = { baseline: null, check: null, busy: false, replies: 0 };
-    }
-    this.chats.delete(key);
-    this.chats.set(key, state);
-    return state;
-  }
-  chatIds(user) {
-    return [...this.chats.keys()].map((key) => JSON.parse(key)).filter(([owner]) => owner === user).map(([, chat]) => chat).filter((chat, index, all) => all.indexOf(chat) === index);
-  }
-  view(user, chat, session) {
-    const state = chat ? this.shown(user, chat) : undefined;
-    const pending = state?.check ? this.pending.get(state.check.id) : undefined;
-    return { check: state?.check ?? null, hasBaseline: !!state?.baseline, canDecide: !!pending && !!session && pending.session === session };
-  }
-  unwatched(user, chat) {
-    const state = this.chats.get(this.key(user, chat));
-    if (state && !state.busy) {
-      state.baseline = null;
-      state.retained = undefined;
-      state.restored = false;
-      state.replies = 0;
-    }
-  }
-  forget(user, chat) {
-    this.store?.clear(user, chat);
-  }
-  clear(user, chat) {
-    const states = this.chatStates(user, chat);
-    if (states.some(([, state]) => state.busy))
-      throw new Error("Finish or stop this generation before clearing its baseline.");
-    for (const [key] of states)
-      this.chats.delete(key);
-    this.store?.clear(user, chat);
-    this.notify(user, chat);
-  }
-  decide(user, session, id, allow) {
-    const pending = this.pending.get(id);
-    if (!pending || !session || pending.userId !== user || pending.session !== session)
-      throw new Error("This review expired or belongs to another browser session.");
-    pending.settle(allow);
-  }
-  async inspect(messages, context, settings, epoch = null) {
-    if (context.isDryRun || settings.mode === "off")
-      return messages;
-    context.signal.throwIfAborted();
-    const state = this.state(context.userId, context.chatId, context.scope);
-    if (state.busy)
-      throw new Error("LumiCache is already inspecting a generation in this chat. Wait for it to finish or stop it first.");
-    state.busy = true;
-    let check;
-    try {
-      const config = validateSettings(settings);
-      if (this.store && !state.restored) {
-        state.restored = true;
-        try {
-          const saved = await this.store.load(context.userId, context.chatId, context.scope);
-          if (saved && !state.baseline) {
-            state.baseline = { ...snapshot(saved.messages, context), at: saved.at, route: saved.route, model: saved.model };
-            state.retained = retain(saved.messages);
-            state.replies = saved.replies;
-            state.epoch = saved.epoch;
-          }
-        } catch (error) {
-          console.warn("[LumiCache] Could not read the saved baseline:", error);
-        }
-        context.signal.throwIfAborted();
-      }
-      const incoming = snapshot(messages, context);
-      const planned = !!state.baseline && epoch !== null && epoch !== state.epoch;
-      const refresh = !!state.baseline && (epoch !== null ? epoch !== state.epoch : config.forceConsistency && config.refreshEnabled && state.replies >= config.refreshEvery);
-      const routeChanged = !!state.baseline && state.baseline.route !== incoming.route;
-      let policy;
-      if (refresh && !routeChanged)
-        policy = { action: "refresh", restored: 0, relocated: 0, replies: state.replies, approximate: false };
-      else if (config.forceConsistency && !routeChanged) {
-        const result = await preserve(state.retained?.messages ?? null, messages, config, context, this.countTokens);
-        messages = result.messages;
-        policy = { action: state.retained ? "preserved" : "seed", restored: result.restored, relocated: result.relocated, replies: state.replies, approximate: result.approximate };
-      }
-      context.signal.throwIfAborted();
-      const after = snapshot(messages, context);
-      check = {
-        id: crypto.randomUUID(),
-        chatId: context.chatId,
-        generationId: context.generationId,
-        deadline: Math.min(Date.now() + 290000, context.interceptorDeadlineAt - 1000),
-        status: "allowed",
-        comparison: compare(state.baseline, after),
-        before: state.baseline,
-        after,
-        policy
-      };
-      if (context.label)
-        check.comparison.summary = `${context.label}: ${check.comparison.summary}`;
-      let tolerated = false;
-      if (check.comparison.kind === "break" && !routeChanged && state.retained && historyUnchanged(state.retained.messages, messages)) {
-        const boundary = await tailStart(state.retained.messages, config, context, this.countTokens);
-        tolerated = check.comparison.firstMessage !== null && check.comparison.firstMessage >= boundary.index;
-        if (tolerated && !policy)
-          check.policy = { action: "tolerated", restored: 0, relocated: 0, replies: state.replies, approximate: boundary.approximate };
-      }
-      if (state.baseline) {
-        try {
-          check.timeline = buildTimeline(state.baseline, promptOutline(state.baseline, state.retained?.messages ?? [], []), after, promptOutline(after, messages, []), check.comparison, tolerated);
-        } catch (error) {
-          console.warn("[LumiCache] Could not build the live timeline:", error);
-        }
-      }
-      const retained = retain(messages);
-      state.candidate = retained;
-      if (check.policy)
-        check.policy.accepted = tolerated || refresh && !routeChanged || check.comparison.kind !== "break";
-      this.reserve(state, check);
-      state.check = check;
-      const alarming = check.comparison.kind === "break" && !tolerated && !(refresh && !routeChanged);
-      if (alarming && settings.mode === "pause") {
-        check.status = "waiting";
-        const review = check;
-        await new Promise((resolve, reject) => {
-          const settle = (allow, reason) => {
-            clearTimeout(timer);
-            context.signal.removeEventListener("abort", abort);
-            this.pending.delete(review.id);
-            if (allow && !context.signal.aborted && Date.now() < review.deadline)
-              resolve();
-            else
-              reject(new Error(reason ?? "LumiCache cancelled this request before sending."));
-          };
-          const abort = () => settle(false, "Generation stopped while reviewing the prompt.");
-          const timer = setTimeout(() => settle(false, "LumiCache review expired. Retry sending to review it again."), Math.max(0, review.deadline - Date.now()));
-          this.pending.set(review.id, { userId: context.userId, session: context.frontendSessionId, check: review, settle });
-          context.signal.addEventListener("abort", abort, { once: true });
-          if (context.signal.aborted)
-            abort();
-          else
-            this.notify(context.userId, context.chatId, context.frontendSessionId);
-        });
-      }
-      context.signal.throwIfAborted();
-      check.status = "allowed";
-      if (alarming && settings.mode === "warn")
-        this.toastBreak(messages, check, context, "warning", (depth) => `Cache has been broken at depth ${depth}!`, (tokens) => `${tokens} tokens will be recached \uD83D\uDCB8.`);
-      else if (planned && check.comparison.kind === "break" && !routeChanged)
-        this.toastBreak(messages, check, context, "success", () => "LumiBooks Compaction Successful.", (tokens) => `Gracefully re-caching ${tokens} tokens \uD83D\uDC96.`);
-      this.candidates.set(this.key(context.userId, context.generationId), { key: this.key(context.userId, context.chatId, context.scope), userId: context.userId, check, retained, refresh, epoch, connection: context.mainDispatch.descriptor?.connectionId });
-      this.notify(context.userId, context.chatId, context.frontendSessionId);
-      return messages;
-    } catch (error) {
-      if (check) {
-        this.pending.get(check.id)?.settle(false);
-        check.status = "cancelled";
-      }
-      state.busy = false;
-      state.candidate = undefined;
-      this.notify(context.userId, context.chatId, context.frontendSessionId);
-      throw error;
-    }
-  }
-  prompt(user, chat) {
-    const state = this.chats.get(this.key(user, chat));
-    return state?.baseline && state.retained && state.connection ? { messages: state.retained.messages, connectionId: state.connection, model: state.baseline.model } : null;
-  }
-  finish(user, generation, success, replyId) {
-    const key = this.key(user, generation), candidate = this.candidates.get(key);
-    if (!candidate)
-      return false;
-    this.candidates.delete(key);
-    const state = this.chats.get(candidate.key);
-    if (!state || state.check !== candidate.check)
-      return false;
-    state.busy = false;
-    candidate.check.status = success ? "completed" : "failed";
-    state.candidate = undefined;
-    if (success) {
-      state.baseline = candidate.check.after;
-      state.retained = candidate.retained;
-      state.replies = candidate.refresh ? 1 : state.replies + 1;
-      state.epoch = candidate.epoch;
-      state.connection = candidate.connection;
-      const [, chat, scope] = JSON.parse(candidate.key), after = candidate.check.after;
-      this.store?.save(user, chat, scope, { at: after.at, route: after.route, model: after.model, messages: candidate.retained.messages, replies: state.replies, epoch: state.epoch }, replyId);
-    }
-    this.notify(user, candidate.check.chatId);
-    return success;
-  }
-}
-
-// src/host-context.ts
-async function connectionDispatch(api, connectionId, userId, model) {
-  const connection = connectionId ? await api.connections.get(connectionId, userId) : (await api.connections.list(userId)).find((connection) => connection.is_default);
-  if (!connection)
-    throw new Error("LumiCache could not inspect the selected connection.");
-  let origin = "Provider default endpoint";
-  if (connection.api_url) {
-    try {
-      origin = new URL(connection.api_url).origin;
-    } catch {
-      throw new Error("LumiCache could not read the selected connection endpoint.");
-    }
-  }
-  const revision = `${connection.id}:${connection.updated_at}`;
-  return { descriptor: { connectionId: connection.id, provider: connection.provider, model, endpointOrigin: origin, connectionDispatchRevision: revision }, connectionDispatchRevision: revision, dispatchKind: "concrete" };
-}
-
-class HostContexts {
-  active = new Map;
-  key(user, chat) {
-    return JSON.stringify([user, chat]);
-  }
-  start(user, event) {
-    this.active.set(this.key(user, event.chatId), event);
-  }
-  isActive(user, chat) {
-    return this.active.has(this.key(user, chat));
-  }
-  finish(user, event) {
-    const key = this.key(user, event.chatId);
-    if (this.active.get(key)?.generationId === event.generationId)
-      this.active.delete(key);
-  }
-  async resolve(raw, api) {
-    const started = this.active.get(this.key(raw.userId, raw.chatId));
-    if (!started || raw.generationId && raw.generationId !== started.generationId)
-      throw new Error("LumiCache could not match this prompt to its live generation. Stop and retry the request.");
-    const dispatch = raw.mainDispatch ?? await connectionDispatch(api, raw.connectionId, raw.userId, started.model);
-    raw.signal.throwIfAborted();
-    if (this.active.get(this.key(raw.userId, raw.chatId)) !== started)
-      throw new Error("The generation ended while LumiCache was preparing its check.");
-    return {
-      userId: raw.userId,
-      chatId: raw.chatId,
-      generationId: started.generationId,
-      frontendSessionId: raw.frontendSessionId ?? started.frontendSessionId,
-      isDryRun: raw.isDryRun === true || raw.dryRun === true,
-      signal: raw.signal,
-      interceptorDeadlineAt: raw.interceptorDeadlineAt ?? Date.now() + 295000,
-      mainDispatch: dispatch
-    };
-  }
-}
-
-// src/health/service.ts
-import { createHash as createHash5 } from "crypto";
-
-// src/health/depth.ts
-async function classifyDepth(report, settings, messages, api, userId) {
-  const policy = validateSettings(settings);
-  const history = messages.filter((m) => m.__isChatHistory || m.__chatHistorySource === true);
-  const counts = new Map;
-  for (const finding of report.findings) {
-    if (finding.level !== "depth")
-      continue;
-    const depth = finding.depth ?? 0;
-    finding.problematic = depth > (policy.acceptableDepth ?? DEFAULT_ACCEPTABLE_DEPTH);
-    if (policy.acceptableTokens !== null) {
-      if (!counts.has(depth) && (history.length || depth === 0) && api) {
-        const value = depth === 0 ? { total_tokens: 0, approximate: false } : await api.tokens.countMessages(history.slice(-depth), { model: report.model, userId });
-        counts.set(depth, value);
-      }
-      const result = counts.get(depth);
-      if (result) {
-        finding.depthTokens = result.total_tokens;
-        finding.tokenEstimate = result.approximate;
-      }
-      finding.problematic ||= !result || result.total_tokens > policy.acceptableTokens;
-      finding.detail = result ? `${depth} history messages \xB7 ${result.approximate ? "approximately " : ""}${result.total_tokens.toLocaleString()} tokens behind this position.` : "The host did not expose enough history placement data to verify this token limit.";
-    }
-    finding.suggestion = finding.problematic ? "Outside your allowed tail. Force consistency can move it to the end or the allowed boundary." : "Within your configured tolerance. This is not a guarantee of a provider cache hit.";
-  }
-  return report;
-}
-
 // src/health/macro-syntax.ts
 class ScanLimit extends Error {
   constructor() {
@@ -2742,11 +944,11 @@ function regexFindings(scripts, preset, options) {
 }
 
 // src/health/history.ts
-import { createHash as createHash4 } from "crypto";
+import { createHash as createHash2 } from "crypto";
 function historyTemplate(message) {
   let text = message.content;
   const provenance = message.extra?.macro_literal_braces;
-  const positions = provenance?.[createHash4("sha256").update(text).digest("hex")];
+  const positions = provenance?.[createHash2("sha256").update(text).digest("hex")];
   if (Array.isArray(positions)) {
     const chunks = [];
     let start = 0, valid = true;
@@ -2880,10 +1082,20 @@ function reportedUsage(saved, messageId) {
   const raw = saved?.usage?.provider_raw;
   if (!raw)
     return;
-  const number = (...values) => values.find((value) => typeof value === "number" && Number.isFinite(value) && value >= 0);
-  const read = number(raw.cache_read_input_tokens, raw.prompt_tokens_details?.cached_tokens, raw.input_tokens_details?.cached_tokens, raw.cachedContentTokenCount);
-  const write = number(raw.cache_creation_input_tokens, raw.prompt_tokens_details?.cache_write_tokens, raw.input_tokens_details?.cache_write_tokens);
+  const largest = (...values) => {
+    const found = values.filter((value) => typeof value === "number" && Number.isFinite(value) && value >= 0);
+    return found.length ? Math.max(...found) : undefined;
+  };
+  const read = largest(raw.cache_read_input_tokens, raw.prompt_tokens_details?.cached_tokens, raw.input_tokens_details?.cached_tokens, raw.cachedContentTokenCount, raw.prompt_cache_hit_tokens, raw.cached_tokens);
+  const write = largest(raw.cache_creation_input_tokens, raw.prompt_tokens_details?.cache_write_tokens, raw.input_tokens_details?.cache_write_tokens);
   return read === undefined && write === undefined ? undefined : { read, write, model: saved.model, messageId };
+}
+function sentUsage(usage) {
+  const found = reportedUsage({ usage }, "");
+  if (found)
+    return found;
+  const raw = usage?.provider_raw;
+  return raw && [raw.prompt_tokens, raw.input_tokens, raw.promptTokenCount].some((value) => typeof value === "number") ? { read: 0 } : undefined;
 }
 var WRITES = /counter|toggle|(?:set|inc|dec|add|delete|flush)(?:global|chat|g)?var|[.$@][\w-]+\s*(?:=|\+\+|--|\+=|-=)/i;
 function presetSettings(sources) {
@@ -3127,6 +1339,1867 @@ function analyze(sources, preview, usage) {
     clipping: preview.contextClipStats,
     usage
   };
+}
+
+// src/prompt-store.ts
+import { createHash as createHash3 } from "crypto";
+// node_modules/diff/libesm/diff/base.js
+class Diff {
+  diff(oldStr, newStr, options = {}) {
+    let callback;
+    if (typeof options === "function") {
+      callback = options;
+      options = {};
+    } else if ("callback" in options) {
+      callback = options.callback;
+    }
+    const oldString = this.castInput(oldStr, options);
+    const newString = this.castInput(newStr, options);
+    const oldTokens = this.removeEmpty(this.tokenize(oldString, options));
+    const newTokens = this.removeEmpty(this.tokenize(newString, options));
+    return this.diffWithOptionsObj(oldTokens, newTokens, options, callback);
+  }
+  diffWithOptionsObj(oldTokens, newTokens, options, callback) {
+    var _a;
+    const done = (value) => {
+      value = this.postProcess(value, options);
+      if (callback) {
+        setTimeout(function() {
+          callback(value);
+        }, 0);
+        return;
+      } else {
+        return value;
+      }
+    };
+    const newLen = newTokens.length, oldLen = oldTokens.length;
+    let editLength = 1;
+    let maxEditLength = newLen + oldLen;
+    if (options.maxEditLength != null) {
+      maxEditLength = Math.min(maxEditLength, options.maxEditLength);
+    }
+    const maxExecutionTime = (_a = options.timeout) !== null && _a !== undefined ? _a : Infinity;
+    const abortAfterTimestamp = Date.now() + maxExecutionTime;
+    const bestPath = [{ oldPos: -1, lastComponent: undefined }];
+    let newPos = this.extractCommon(bestPath[0], newTokens, oldTokens, 0, options);
+    if (bestPath[0].oldPos + 1 >= oldLen && newPos + 1 >= newLen) {
+      return done(this.buildValues(bestPath[0].lastComponent, newTokens, oldTokens));
+    }
+    let minDiagonalToConsider = -Infinity, maxDiagonalToConsider = Infinity;
+    const execEditLength = () => {
+      for (let diagonalPath = Math.max(minDiagonalToConsider, -editLength);diagonalPath <= Math.min(maxDiagonalToConsider, editLength); diagonalPath += 2) {
+        let basePath;
+        const removePath = bestPath[diagonalPath - 1], addPath = bestPath[diagonalPath + 1];
+        if (removePath) {
+          bestPath[diagonalPath - 1] = undefined;
+        }
+        let canAdd = false;
+        if (addPath) {
+          const addPathNewPos = addPath.oldPos - diagonalPath;
+          canAdd = addPath && 0 <= addPathNewPos && addPathNewPos < newLen;
+        }
+        const canRemove = removePath && removePath.oldPos + 1 < oldLen;
+        if (!canAdd && !canRemove) {
+          bestPath[diagonalPath] = undefined;
+          continue;
+        }
+        if (!canRemove || canAdd && removePath.oldPos < addPath.oldPos) {
+          basePath = this.addToPath(addPath, true, false, 0, options);
+        } else {
+          basePath = this.addToPath(removePath, false, true, 1, options);
+        }
+        newPos = this.extractCommon(basePath, newTokens, oldTokens, diagonalPath, options);
+        if (basePath.oldPos + 1 >= oldLen && newPos + 1 >= newLen) {
+          return done(this.buildValues(basePath.lastComponent, newTokens, oldTokens)) || true;
+        } else {
+          bestPath[diagonalPath] = basePath;
+          if (basePath.oldPos + 1 >= oldLen) {
+            maxDiagonalToConsider = Math.min(maxDiagonalToConsider, diagonalPath - 1);
+          }
+          if (newPos + 1 >= newLen) {
+            minDiagonalToConsider = Math.max(minDiagonalToConsider, diagonalPath + 1);
+          }
+        }
+      }
+      editLength++;
+    };
+    if (callback) {
+      (function exec() {
+        setTimeout(function() {
+          if (editLength > maxEditLength || Date.now() > abortAfterTimestamp) {
+            return callback(undefined);
+          }
+          if (!execEditLength()) {
+            exec();
+          }
+        }, 0);
+      })();
+    } else {
+      while (editLength <= maxEditLength && Date.now() <= abortAfterTimestamp) {
+        const ret = execEditLength();
+        if (ret) {
+          return ret;
+        }
+      }
+    }
+  }
+  addToPath(path, added, removed, oldPosInc, options) {
+    const last = path.lastComponent;
+    if (last && !options.oneChangePerToken && last.added === added && last.removed === removed) {
+      return {
+        oldPos: path.oldPos + oldPosInc,
+        lastComponent: { count: last.count + 1, added, removed, previousComponent: last.previousComponent }
+      };
+    } else {
+      return {
+        oldPos: path.oldPos + oldPosInc,
+        lastComponent: { count: 1, added, removed, previousComponent: last }
+      };
+    }
+  }
+  extractCommon(basePath, newTokens, oldTokens, diagonalPath, options) {
+    const newLen = newTokens.length, oldLen = oldTokens.length;
+    let oldPos = basePath.oldPos, newPos = oldPos - diagonalPath, commonCount = 0;
+    while (newPos + 1 < newLen && oldPos + 1 < oldLen && this.equals(oldTokens[oldPos + 1], newTokens[newPos + 1], options)) {
+      newPos++;
+      oldPos++;
+      commonCount++;
+      if (options.oneChangePerToken) {
+        basePath.lastComponent = { count: 1, previousComponent: basePath.lastComponent, added: false, removed: false };
+      }
+    }
+    if (commonCount && !options.oneChangePerToken) {
+      basePath.lastComponent = { count: commonCount, previousComponent: basePath.lastComponent, added: false, removed: false };
+    }
+    basePath.oldPos = oldPos;
+    return newPos;
+  }
+  equals(left, right, options) {
+    if (options.comparator) {
+      return options.comparator(left, right);
+    } else {
+      return left === right || !!options.ignoreCase && left.toLowerCase() === right.toLowerCase();
+    }
+  }
+  removeEmpty(array) {
+    const ret = [];
+    for (let i = 0;i < array.length; i++) {
+      if (array[i]) {
+        ret.push(array[i]);
+      }
+    }
+    return ret;
+  }
+  castInput(value, options) {
+    return value;
+  }
+  tokenize(value, options) {
+    return Array.from(value);
+  }
+  join(chars) {
+    return chars.join("");
+  }
+  postProcess(changeObjects, options) {
+    return changeObjects;
+  }
+  get useLongestToken() {
+    return false;
+  }
+  buildValues(lastComponent, newTokens, oldTokens) {
+    const components = [];
+    let nextComponent;
+    while (lastComponent) {
+      components.push(lastComponent);
+      nextComponent = lastComponent.previousComponent;
+      delete lastComponent.previousComponent;
+      lastComponent = nextComponent;
+    }
+    components.reverse();
+    const componentLen = components.length;
+    let componentPos = 0, newPos = 0, oldPos = 0;
+    for (;componentPos < componentLen; componentPos++) {
+      const component = components[componentPos];
+      if (!component.removed) {
+        if (!component.added && this.useLongestToken) {
+          let value = newTokens.slice(newPos, newPos + component.count);
+          value = value.map(function(value, i) {
+            const oldValue = oldTokens[oldPos + i];
+            return oldValue.length > value.length ? oldValue : value;
+          });
+          component.value = this.join(value);
+        } else {
+          component.value = this.join(newTokens.slice(newPos, newPos + component.count));
+        }
+        newPos += component.count;
+        if (!component.added) {
+          oldPos += component.count;
+        }
+      } else {
+        component.value = this.join(oldTokens.slice(oldPos, oldPos + component.count));
+        oldPos += component.count;
+      }
+    }
+    return components;
+  }
+}
+
+// node_modules/diff/libesm/util/string.js
+function longestCommonPrefix(str1, str2) {
+  let i;
+  for (i = 0;i < str1.length && i < str2.length; i++) {
+    if (str1[i] != str2[i]) {
+      return str1.slice(0, i);
+    }
+  }
+  return str1.slice(0, i);
+}
+function longestCommonSuffix(str1, str2) {
+  let i;
+  if (!str1 || !str2 || str1[str1.length - 1] != str2[str2.length - 1]) {
+    return "";
+  }
+  for (i = 0;i < str1.length && i < str2.length; i++) {
+    if (str1[str1.length - (i + 1)] != str2[str2.length - (i + 1)]) {
+      return str1.slice(-i);
+    }
+  }
+  return str1.slice(-i);
+}
+function replacePrefix(string, oldPrefix, newPrefix) {
+  if (string.slice(0, oldPrefix.length) != oldPrefix) {
+    throw Error(`string ${JSON.stringify(string)} doesn't start with prefix ${JSON.stringify(oldPrefix)}; this is a bug`);
+  }
+  return newPrefix + string.slice(oldPrefix.length);
+}
+function replaceSuffix(string, oldSuffix, newSuffix) {
+  if (!oldSuffix) {
+    return string + newSuffix;
+  }
+  if (string.slice(-oldSuffix.length) != oldSuffix) {
+    throw Error(`string ${JSON.stringify(string)} doesn't end with suffix ${JSON.stringify(oldSuffix)}; this is a bug`);
+  }
+  return string.slice(0, -oldSuffix.length) + newSuffix;
+}
+function removePrefix(string, oldPrefix) {
+  return replacePrefix(string, oldPrefix, "");
+}
+function removeSuffix(string, oldSuffix) {
+  return replaceSuffix(string, oldSuffix, "");
+}
+function maximumOverlap(string1, string2) {
+  return string2.slice(0, overlapCount(string1, string2));
+}
+function overlapCount(a, b) {
+  let startA = 0;
+  if (a.length > b.length) {
+    startA = a.length - b.length;
+  }
+  let endB = b.length;
+  if (a.length < b.length) {
+    endB = a.length;
+  }
+  const map = Array(endB);
+  let k = 0;
+  map[0] = 0;
+  for (let j = 1;j < endB; j++) {
+    if (b[j] == b[k]) {
+      map[j] = map[k];
+    } else {
+      map[j] = k;
+    }
+    while (k > 0 && b[j] != b[k]) {
+      k = map[k];
+    }
+    if (b[j] == b[k]) {
+      k++;
+    }
+  }
+  k = 0;
+  for (let i = startA;i < a.length; i++) {
+    while (k > 0 && a[i] != b[k]) {
+      k = map[k];
+    }
+    if (a[i] == b[k]) {
+      k++;
+    }
+  }
+  return k;
+}
+function segment(string, segmenter) {
+  const parts = [];
+  for (const segmentObj of Array.from(segmenter.segment(string))) {
+    const segment = segmentObj.segment;
+    if (parts.length && /\s/.test(parts[parts.length - 1]) && /\s/.test(segment)) {
+      parts[parts.length - 1] += segment;
+    } else {
+      parts.push(segment);
+    }
+  }
+  return parts;
+}
+function trailingWs(string, segmenter) {
+  if (segmenter) {
+    return leadingAndTrailingWs(string, segmenter)[1];
+  }
+  let i;
+  for (i = string.length - 1;i >= 0; i--) {
+    if (!string[i].match(/\s/)) {
+      break;
+    }
+  }
+  return string.substring(i + 1);
+}
+function leadingWs(string, segmenter) {
+  if (segmenter) {
+    return leadingAndTrailingWs(string, segmenter)[0];
+  }
+  const match = string.match(/^\s*/);
+  return match ? match[0] : "";
+}
+function leadingAndTrailingWs(string, segmenter) {
+  if (!segmenter) {
+    return [leadingWs(string), trailingWs(string)];
+  }
+  if (segmenter.resolvedOptions().granularity != "word") {
+    throw new Error('The segmenter passed must have a granularity of "word"');
+  }
+  const segments = segment(string, segmenter);
+  const firstSeg = segments[0];
+  const lastSeg = segments[segments.length - 1];
+  const head = /\s/.test(firstSeg) ? firstSeg : "";
+  const tail = /\s/.test(lastSeg) ? lastSeg : "";
+  return [head, tail];
+}
+
+// node_modules/diff/libesm/diff/word.js
+var extendedWordChars = "a-zA-Z0-9_\\u{AD}\\u{C0}-\\u{D6}\\u{D8}-\\u{F6}\\u{F8}-\\u{2C6}\\u{2C8}-\\u{2D7}\\u{2DE}-\\u{2FF}\\u{1E00}-\\u{1EFF}";
+var tokenizeIncludingWhitespace = new RegExp(`[${extendedWordChars}]+|\\s+|[^${extendedWordChars}]`, "ug");
+
+class WordDiff extends Diff {
+  equals(left, right, options) {
+    if (options.ignoreCase) {
+      left = left.toLowerCase();
+      right = right.toLowerCase();
+    }
+    return left.trim() === right.trim();
+  }
+  tokenize(value, options = {}) {
+    let parts;
+    if (options.intlSegmenter) {
+      const segmenter = options.intlSegmenter;
+      if (segmenter.resolvedOptions().granularity != "word") {
+        throw new Error('The segmenter passed must have a granularity of "word"');
+      }
+      parts = segment(value, segmenter);
+    } else {
+      parts = value.match(tokenizeIncludingWhitespace) || [];
+    }
+    const tokens = [];
+    let prevPart = null;
+    parts.forEach((part) => {
+      if (/\s/.test(part)) {
+        if (prevPart == null) {
+          tokens.push(part);
+        } else {
+          tokens.push(tokens.pop() + part);
+        }
+      } else if (prevPart != null && /\s/.test(prevPart)) {
+        if (tokens[tokens.length - 1] == prevPart) {
+          tokens.push(tokens.pop() + part);
+        } else {
+          tokens.push(prevPart + part);
+        }
+      } else {
+        tokens.push(part);
+      }
+      prevPart = part;
+    });
+    return tokens;
+  }
+  join(tokens) {
+    return tokens.map((token, i) => {
+      if (i == 0) {
+        return token;
+      } else {
+        return token.replace(/^\s+/, "");
+      }
+    }).join("");
+  }
+  postProcess(changes, options) {
+    if (!changes || options.oneChangePerToken) {
+      return changes;
+    }
+    let lastKeep = null;
+    let insertion = null;
+    let deletion = null;
+    changes.forEach((change) => {
+      if (change.added) {
+        insertion = change;
+      } else if (change.removed) {
+        deletion = change;
+      } else {
+        if (insertion || deletion) {
+          dedupeWhitespaceInChangeObjects(lastKeep, deletion, insertion, change, options.intlSegmenter);
+        }
+        lastKeep = change;
+        insertion = null;
+        deletion = null;
+      }
+    });
+    if (insertion || deletion) {
+      dedupeWhitespaceInChangeObjects(lastKeep, deletion, insertion, null, options.intlSegmenter);
+    }
+    return changes;
+  }
+}
+var wordDiff = new WordDiff;
+function dedupeWhitespaceInChangeObjects(startKeep, deletion, insertion, endKeep, segmenter) {
+  if (deletion && insertion) {
+    const [oldWsPrefix, oldWsSuffix] = leadingAndTrailingWs(deletion.value, segmenter);
+    const [newWsPrefix, newWsSuffix] = leadingAndTrailingWs(insertion.value, segmenter);
+    if (startKeep) {
+      const commonWsPrefix = longestCommonPrefix(oldWsPrefix, newWsPrefix);
+      startKeep.value = replaceSuffix(startKeep.value, newWsPrefix, commonWsPrefix);
+      deletion.value = removePrefix(deletion.value, commonWsPrefix);
+      insertion.value = removePrefix(insertion.value, commonWsPrefix);
+    }
+    if (endKeep) {
+      const commonWsSuffix = longestCommonSuffix(oldWsSuffix, newWsSuffix);
+      endKeep.value = replacePrefix(endKeep.value, newWsSuffix, commonWsSuffix);
+      deletion.value = removeSuffix(deletion.value, commonWsSuffix);
+      insertion.value = removeSuffix(insertion.value, commonWsSuffix);
+    }
+  } else if (insertion) {
+    if (startKeep) {
+      const ws = leadingWs(insertion.value, segmenter);
+      insertion.value = insertion.value.substring(ws.length);
+    }
+    if (endKeep) {
+      const ws = leadingWs(endKeep.value, segmenter);
+      endKeep.value = endKeep.value.substring(ws.length);
+    }
+  } else if (startKeep && endKeep) {
+    const newWsFull = leadingWs(endKeep.value, segmenter), [delWsStart, delWsEnd] = leadingAndTrailingWs(deletion.value, segmenter);
+    const newWsStart = longestCommonPrefix(newWsFull, delWsStart);
+    deletion.value = removePrefix(deletion.value, newWsStart);
+    const newWsEnd = longestCommonSuffix(removePrefix(newWsFull, newWsStart), delWsEnd);
+    deletion.value = removeSuffix(deletion.value, newWsEnd);
+    endKeep.value = replacePrefix(endKeep.value, newWsFull, newWsEnd);
+    startKeep.value = replaceSuffix(startKeep.value, newWsFull, newWsFull.slice(0, newWsFull.length - newWsEnd.length));
+  } else if (endKeep) {
+    const endKeepWsPrefix = leadingWs(endKeep.value, segmenter);
+    const deletionWsSuffix = trailingWs(deletion.value, segmenter);
+    const overlap = maximumOverlap(deletionWsSuffix, endKeepWsPrefix);
+    deletion.value = removeSuffix(deletion.value, overlap);
+  } else if (startKeep) {
+    const startKeepWsSuffix = trailingWs(startKeep.value, segmenter);
+    const deletionWsPrefix = leadingWs(deletion.value, segmenter);
+    const overlap = maximumOverlap(startKeepWsSuffix, deletionWsPrefix);
+    deletion.value = removePrefix(deletion.value, overlap);
+  }
+}
+
+class WordsWithSpaceDiff extends Diff {
+  tokenize(value) {
+    const regex = new RegExp(`(\\r?\\n)|[${extendedWordChars}]+|[^\\S\\n\\r]+|[^${extendedWordChars}]`, "ug");
+    return value.match(regex) || [];
+  }
+}
+var wordsWithSpaceDiff = new WordsWithSpaceDiff;
+function diffWordsWithSpace(oldStr, newStr, options) {
+  return wordsWithSpaceDiff.diff(oldStr, newStr, options);
+}
+// node_modules/diff/libesm/diff/array.js
+class ArrayDiff extends Diff {
+  tokenize(value) {
+    return value.slice();
+  }
+  join(value) {
+    return value;
+  }
+  removeEmpty(value) {
+    return value;
+  }
+}
+var arrayDiff = new ArrayDiff;
+function diffArrays(oldArr, newArr, options) {
+  return arrayDiff.diff(oldArr, newArr, options);
+}
+// src/diff-engine.ts
+var PAGE_ROWS = 100;
+var ROW_CHARACTERS = 1024;
+var WORD_DIFF_CHARACTERS = 256000;
+var WORD_DIFF_MS = 80;
+var WORD_DIFF_MIN_COMMON = 0.2;
+
+class TextIndex {
+  text;
+  starts;
+  lines;
+  columns;
+  constructor(text) {
+    this.text = text;
+    const scan = (visit) => {
+      let row = 0, position = 0, line = 1, lineStart = 0, newline = text.indexOf(`
+`);
+      visit?.(0, 0, 1, 1);
+      while (position < text.length) {
+        let end = Math.min(text.length, position + ROW_CHARACTERS, newline < 0 ? Infinity : newline + 1);
+        if (end < text.length && (text.charCodeAt(end - 1) === 13 && text.charCodeAt(end) === 10 || text.charCodeAt(end - 1) >= 55296 && text.charCodeAt(end - 1) <= 56319 && text.charCodeAt(end) >= 56320 && text.charCodeAt(end) <= 57343))
+          end--;
+        if (end === newline + 1) {
+          line++;
+          lineStart = end;
+          newline = text.indexOf(`
+`, end);
+        }
+        position = end;
+        if (++row > 2000000)
+          throw new Error("This message exceeds two million display fragments. Split it into smaller prompt messages to inspect its diff.");
+        visit?.(row, position, line, position - lineStart + 1);
+      }
+      return row + 1;
+    };
+    const count = scan();
+    this.starts = new Uint32Array(count);
+    this.lines = new Uint32Array(count);
+    this.columns = new Uint32Array(count);
+    scan((row, offset, line, column) => {
+      this.starts[row] = offset;
+      this.lines[row] = line;
+      this.columns[row] = column;
+    });
+  }
+  at(offset) {
+    let low = 0, high = this.starts.length - 1;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (this.starts[mid] <= offset)
+        low = mid;
+      else
+        high = mid - 1;
+    }
+    return low;
+  }
+  location(offset) {
+    const index = this.at(offset), line = this.lines[index];
+    return { line, column: this.columns[index] + offset - this.starts[index] };
+  }
+  count(start, end) {
+    return end <= start ? 0 : this.at(end - 1) - this.at(start) + 1;
+  }
+  range(start, end, row) {
+    const index = this.at(start) + row;
+    return [Math.max(start, this.starts[index]), Math.min(end, this.starts[index + 1])];
+  }
+}
+function tokens(text) {
+  const result = [];
+  let start = 0, newline = text.indexOf(`
+`);
+  while (start < text.length) {
+    if (result.length >= 200000)
+      return;
+    let end = Math.min(text.length, start + ROW_CHARACTERS, newline < 0 ? Infinity : newline + 1);
+    if (end < text.length && (text.charCodeAt(end - 1) === 13 && text.charCodeAt(end) === 10 || text.charCodeAt(end - 1) >= 55296 && text.charCodeAt(end - 1) <= 56319 && text.charCodeAt(end) >= 56320 && text.charCodeAt(end) <= 57343))
+      end--;
+    if (end === newline + 1)
+      newline = text.indexOf(`
+`, end);
+    result.push(text.slice(start, end));
+    start = end;
+  }
+  return result;
+}
+
+class DiffPlan {
+  before;
+  after;
+  sections = [];
+  total;
+  note;
+  constructor(oldText, newText) {
+    this.before = new TextIndex(oldText);
+    this.after = new TextIndex(newText);
+    let prefix = 0, suffix = 0;
+    const min = Math.min(oldText.length, newText.length);
+    while (prefix < min && oldText.charCodeAt(prefix) === newText.charCodeAt(prefix))
+      prefix++;
+    while (suffix < min - prefix && oldText.charCodeAt(oldText.length - suffix - 1) === newText.charCodeAt(newText.length - suffix - 1))
+      suffix++;
+    if (oldText !== newText) {
+      const lineStart = prefix ? oldText.lastIndexOf(`
+`, prefix - 1) + 1 : 0;
+      if (prefix - lineStart <= ROW_CHARACTERS)
+        prefix = lineStart;
+      const end = oldText.length - suffix, newline = oldText.indexOf(`
+`, end);
+      if (newline >= 0 && newline + 1 - end <= ROW_CHARACTERS)
+        suffix = oldText.length - newline - 1;
+      else if (suffix <= ROW_CHARACTERS)
+        suffix = 0;
+    }
+    const split = (s, n) => n > 0 && n < s.length && (s.charCodeAt(n - 1) === 13 && s.charCodeAt(n) === 10 || s.charCodeAt(n - 1) >= 55296 && s.charCodeAt(n - 1) <= 56319 && s.charCodeAt(n) >= 56320 && s.charCodeAt(n) <= 57343);
+    if (split(oldText, prefix) || split(newText, prefix))
+      prefix--;
+    if (split(oldText, oldText.length - suffix) || split(newText, newText.length - suffix))
+      suffix--;
+    const runs = [];
+    if (prefix)
+      runs.push({ kind: "equal", start: 0, end: prefix, other: 0 });
+    const oldMiddle = oldText.slice(prefix, oldText.length - suffix), newMiddle = newText.slice(prefix, newText.length - suffix);
+    const oldTokens = tokens(oldMiddle), newTokens = tokens(newMiddle);
+    const parts = oldTokens && newTokens && oldTokens.length + newTokens.length <= 200000 ? diffArrays(oldTokens, newTokens, { timeout: 80, maxEditLength: 1000 }) : undefined;
+    let a = prefix, b = prefix;
+    if (parts)
+      for (const part of parts) {
+        const length = part.value.reduce((n, token) => n + token.length, 0);
+        if (!length)
+          continue;
+        if (part.added) {
+          runs.push({ kind: "add", start: b, end: b + length, other: a });
+          b += length;
+        } else if (part.removed) {
+          runs.push({ kind: "remove", start: a, end: a + length, other: b });
+          a += length;
+        } else {
+          runs.push({ kind: "equal", start: a, end: a + length, other: b });
+          a += length;
+          b += length;
+        }
+      }
+    else {
+      if (oldMiddle.length)
+        runs.push({ kind: "remove", start: prefix, end: oldText.length - suffix, other: prefix });
+      if (newMiddle.length)
+        runs.push({ kind: "add", start: prefix, end: newText.length - suffix, other: prefix });
+      this.note = "This large changed region is shown as a replacement because detailed alignment reached its work limit. All text remains available in bounded pages; unchanged text inside this region may appear on both sides.";
+    }
+    if (suffix)
+      runs.push({ kind: "equal", start: oldText.length - suffix, end: oldText.length, other: newText.length - suffix });
+    for (let i = 0;i + 1 < runs.length; i++)
+      if (runs[i].kind === "remove" && runs[i + 1].kind === "add") {
+        runs[i].partner = runs[i + 1];
+        runs[i + 1].partner = runs[i];
+      }
+    let cursor = 0;
+    const add = (run, first, count, fold) => {
+      if (!count)
+        return;
+      this.sections.push({ run, first, count, fold, cursor });
+      cursor += fold ? 1 : count;
+    };
+    for (const [i, run] of runs.entries()) {
+      const count = this.index(run).count(run.start, run.end);
+      if (run.kind !== "equal") {
+        add(run, 0, count, false);
+        continue;
+      }
+      const head = i ? Math.min(3, count) : 0;
+      const tail = i < runs.length - 1 ? Math.min(3, count - head) : 0;
+      add(run, 0, head, false);
+      add(run, head, count - head - tail, true);
+      add(run, count - tail, tail, false);
+    }
+    this.total = cursor;
+  }
+  index(run) {
+    return run.kind === "add" ? this.after : this.before;
+  }
+  wordChanges(run) {
+    if (run.changed !== undefined)
+      return run.changed;
+    const partner = run.partner;
+    if (!partner)
+      return run.changed = null;
+    const removed = run.kind === "remove" ? run : partner, added = run.kind === "remove" ? partner : run;
+    removed.changed = added.changed = null;
+    const oldText = this.before.text.slice(removed.start, removed.end), newText = this.after.text.slice(added.start, added.end);
+    if (oldText.length > WORD_DIFF_CHARACTERS || newText.length > WORD_DIFF_CHARACTERS)
+      return null;
+    const parts = diffWordsWithSpace(oldText, newText, { timeout: WORD_DIFF_MS });
+    if (!parts)
+      return null;
+    const oldRanges = [], newRanges = [];
+    let a = removed.start, b = added.start, common = 0;
+    const push = (ranges, text, start, end) => {
+      const last = ranges.at(-1);
+      if (last && /^[ \t]{0,2}$/.test(text.slice(last[1], start)))
+        last[1] = end;
+      else
+        ranges.push([start, end]);
+    };
+    for (const part of parts) {
+      const size = part.value.length;
+      if (part.removed) {
+        push(oldRanges, this.before.text, a, a + size);
+        a += size;
+      } else if (part.added) {
+        push(newRanges, this.after.text, b, b + size);
+        b += size;
+      } else {
+        common += size;
+        a += size;
+        b += size;
+      }
+    }
+    if (common / Math.max(oldText.length, newText.length, 1) < WORD_DIFF_MIN_COMMON)
+      return null;
+    removed.changed = oldRanges;
+    added.changed = newRanges;
+    return run.changed;
+  }
+  spans(run, text, start, end) {
+    const ranges = this.wordChanges(run);
+    if (!ranges?.length)
+      return;
+    let low = 0, high = ranges.length;
+    while (low < high) {
+      const mid = low + high >> 1;
+      if (ranges[mid][1] <= start)
+        low = mid + 1;
+      else
+        high = mid;
+    }
+    const result = [];
+    for (let i = low;i < ranges.length && ranges[i][0] < end; i++)
+      result.push([Math.max(ranges[i][0], start) - start, Math.min(ranges[i][1], end) - start]);
+    const visible = text.replace(/\r?\n$/, "").length;
+    if (!result.length || result.length === 1 && result[0][0] === 0 && result[0][1] >= visible)
+      return;
+    return result;
+  }
+  row(section, row) {
+    const { run } = section, index = this.index(run);
+    const [start, end] = index.range(run.start, run.end, section.first + row), location = index.location(start);
+    const next = run.kind === "equal" ? this.after.location(run.other + start - run.start) : location;
+    const text = index.text.slice(start, end), spans = run.kind === "equal" ? undefined : this.spans(run, text, start, end);
+    return {
+      kind: run.kind,
+      text,
+      ...spans ? { spans } : {},
+      ...run.kind !== "add" ? { oldLine: location.line, oldColumn: location.column } : {},
+      ...run.kind !== "remove" ? { newLine: next.line, newColumn: next.column } : {}
+    };
+  }
+  page(cursor = 0, fold, limit = PAGE_ROWS) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > PAGE_ROWS)
+      throw new Error("Invalid diff page size.");
+    if (!Number.isSafeInteger(cursor) || cursor < 0)
+      throw new Error("Invalid diff page.");
+    const selected = fold === undefined ? undefined : this.sections[fold];
+    if (fold !== undefined && (!selected || !selected.fold))
+      throw new Error("This context section is unavailable.");
+    const total = selected ? selected.count : this.total;
+    if (cursor > Math.max(0, total - 1))
+      throw new Error("This diff page is outside the available range.");
+    const items = [];
+    const end = Math.min(total, cursor + limit);
+    if (selected)
+      for (let i = cursor;i < end; i++)
+        items.push(this.row(selected, i));
+    else
+      for (const [id, section] of this.sections.entries()) {
+        if (section.cursor >= end)
+          break;
+        const size = section.fold ? 1 : section.count;
+        if (section.cursor + size <= cursor)
+          continue;
+        if (section.fold) {
+          const index = this.index(section.run), [start] = index.range(section.run.start, section.run.end, section.first);
+          const [, finish] = index.range(section.run.start, section.run.end, section.first + section.count - 1);
+          items.push({ kind: "fold", id, rows: section.count, characters: finish - start });
+        } else
+          for (let i = Math.max(0, cursor - section.cursor);i < Math.min(section.count, end - section.cursor); i++)
+            items.push(this.row(section, i));
+      }
+    return {
+      items,
+      cursor,
+      total,
+      ...end < total ? { next: end } : {},
+      ...cursor ? { previous: Math.max(0, cursor - limit) } : {},
+      ...!selected ? { note: this.note, nextChange: this.sections.find((s) => !s.fold && s.run.kind !== "equal" && s.cursor >= end)?.cursor } : {}
+    };
+  }
+}
+
+// src/prompt-store.ts
+var LIMIT = 256000000;
+var TTL = 30 * 60000;
+var integer = (value, fallback = 0) => {
+  if (value === undefined)
+    return fallback;
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new Error("Invalid prompt page.");
+  return value;
+};
+function alignMessages(a, b) {
+  const hash = (m) => createHash3("sha256").update(m.header).update("\x00").update(m.body).digest("hex");
+  const parts = diffArrays(a.map(hash), b.map(hash), { timeout: 60, maxEditLength: 1000 });
+  const pairs = [];
+  if (!parts) {
+    for (let i = 0;i < Math.max(a.length, b.length); i++)
+      pairs.push([i < a.length ? i : undefined, i < b.length ? i : undefined]);
+    return { pairs, aligned: false };
+  }
+  let ai = 0, bi = 0, removed = [], added = [];
+  const flush = () => {
+    for (let i = 0;i < Math.max(removed.length, added.length); i++)
+      pairs.push([removed[i], added[i]]);
+    removed = [];
+    added = [];
+  };
+  for (const part of parts) {
+    if (part.removed) {
+      for (let i = 0;i < part.value.length; i++)
+        removed.push(ai++);
+    } else if (part.added) {
+      for (let i = 0;i < part.value.length; i++)
+        added.push(bi++);
+    } else {
+      flush();
+      for (let i = 0;i < part.value.length; i++)
+        pairs.push([ai++, bi++]);
+    }
+  }
+  flush();
+  return { pairs, aligned: true };
+}
+
+class PromptStore {
+  snapshots = new Map;
+  plans = new Map;
+  references = new WeakMap;
+  lists = new Map;
+  prune() {
+    for (const [key, value] of this.snapshots)
+      if (value.touched < Date.now() - TTL)
+        this.snapshots.delete(key);
+    for (const [key, value] of this.plans)
+      if (value.touched < Date.now() - TTL)
+        this.plans.delete(key);
+    let size = [...this.snapshots.values()].reduce((n, value) => n + value.size, 0);
+    while (size > LIMIT || this.snapshots.size > 128) {
+      const [key, value] = this.snapshots.entries().next().value;
+      this.snapshots.delete(key);
+      size -= value.size;
+    }
+    let planSize = [...this.plans.values()].reduce((n, value) => n + value.size, 0);
+    while (this.plans.size > 12 || planSize > 192000000) {
+      const [key, value] = this.plans.entries().next().value;
+      this.plans.delete(key);
+      planSize -= value.size;
+    }
+    if (this.lists.size > 64)
+      this.lists.delete(this.lists.keys().next().value);
+  }
+  expose(snapshot, user, session) {
+    let reference = this.references.get(snapshot), stored = reference ? this.snapshots.get(reference) : undefined;
+    if (!stored || stored.user !== user || stored.session !== session) {
+      reference = crypto.randomUUID();
+      stored = { user, session, snapshot, size: snapshot.messages.reduce((n, m) => n + m.body.length + m.header.length, 0), touched: Date.now() };
+      this.references.set(snapshot, reference);
+      this.snapshots.set(reference, stored);
+    } else {
+      stored.touched = Date.now();
+      this.snapshots.delete(reference);
+      this.snapshots.set(reference, stored);
+    }
+    this.prune();
+    return { at: snapshot.at, route: snapshot.route, model: snapshot.model, messages: [], reference, messageCount: snapshot.messages.length };
+  }
+  pack(value, user, session) {
+    if (!value || typeof value !== "object")
+      return value;
+    if (Array.isArray(value))
+      return value.map((item) => this.pack(item, user, session));
+    const object = value;
+    if (Array.isArray(object.messages) && typeof object.route === "string" && typeof object.at === "number")
+      return this.expose(value, user, session);
+    return Object.fromEntries(Object.entries(object).map(([key, item]) => [key, this.pack(item, user, session)]));
+  }
+  get(id, user, session) {
+    this.prune();
+    const value = this.snapshots.get(id);
+    if (!value || value.user !== user || value.session !== session)
+      throw new Error("This prompt view expired or belongs to another browser. Refresh the live check or rerun the simulation.");
+    value.touched = Date.now();
+    this.snapshots.delete(id);
+    this.snapshots.set(id, value);
+    return value.snapshot;
+  }
+  list(user, session, input) {
+    const before = input.before ? this.get(input.before, user, session) : undefined, after = this.get(input.after, user, session);
+    const key = JSON.stringify([input.before, input.after, !!input.includeUnchanged]);
+    let list = this.lists.get(key);
+    if (!list) {
+      const a = before?.messages ?? [], b = after.messages, alignment = alignMessages(a, b);
+      const items = [];
+      let unchanged = 0;
+      const add = (oldIndex, newIndex) => {
+        const old = oldIndex === undefined ? undefined : a[oldIndex], next = newIndex === undefined ? undefined : b[newIndex];
+        const same = !!old && !!next && old.header === next.header && old.body === next.body;
+        if (same)
+          unchanged++;
+        if (!same || input.includeUnchanged)
+          items.push({
+            oldIndex,
+            newIndex,
+            role: next?.role ?? old.role,
+            kind: same ? "unchanged" : !old ? "added" : !next ? "removed" : "changed",
+            headerChanged: !!old && !!next && old.header !== next.header
+          });
+      };
+      for (const [oldIndex, newIndex] of alignment.pairs)
+        add(oldIndex, newIndex);
+      list = { items, unchanged, ...!alignment.aligned ? { note: "Message alignment reached its work limit; messages are compared by position." } : {} };
+      this.lists.set(key, list);
+    }
+    const cursor = integer(input.cursor), total = list.items.length;
+    if (cursor > Math.max(total - 1, 0))
+      throw new Error("This message page is outside the available range.");
+    return {
+      items: list.items.slice(cursor, cursor + 20),
+      total,
+      unchanged: list.unchanged,
+      cursor,
+      note: list.note,
+      ...cursor + 20 < total ? { next: cursor + 20 } : {},
+      ...cursor ? { previous: Math.max(0, cursor - 20) } : {}
+    };
+  }
+  open(user, session, input, pageRows = 100) {
+    const before = input.before ? this.get(input.before, user, session) : undefined, after = this.get(input.after, user, session);
+    const read = (snapshot, index) => {
+      if (index === undefined)
+        return "";
+      const message = snapshot?.messages[integer(index)];
+      if (!message)
+        throw new Error("This prompt message is unavailable.");
+      return input.part === "header" ? message.header : message.body;
+    };
+    const oldText = read(before, input.oldIndex), newText = read(after, input.newIndex);
+    const plan = new DiffPlan(oldText, newText), id = crypto.randomUUID();
+    this.plans.set(id, { user, session, plan, touched: Date.now(), size: (oldText.length + newText.length) * 2 + plan.before.starts.byteLength * 3 + plan.after.starts.byteLength * 3 });
+    this.prune();
+    return { id, page: plan.page(0, undefined, pageRows) };
+  }
+  page(user, session, input) {
+    this.prune();
+    const stored = this.plans.get(input.id);
+    if (!stored || stored.user !== user || stored.session !== session)
+      throw new Error("This diff view expired. Close and reopen the message to load it again.");
+    stored.touched = Date.now();
+    this.plans.delete(input.id);
+    this.plans.set(input.id, stored);
+    return stored.plan.page(integer(input.cursor), input.fold === undefined ? undefined : integer(input.fold), input.limit);
+  }
+}
+
+// src/health/timeline.ts
+var MAX_PARTS = 16;
+var MIN_SEARCH = 8;
+function normalizedHistory(message) {
+  const flags = message;
+  const history = flags.__isChatHistory === true || flags.__chatHistorySource === true;
+  return {
+    role: message.role,
+    content: message.content,
+    name: message.name,
+    ...history ? { __isChatHistory: true } : {},
+    ...flags.sourceMessageId ?? flags.__sourceMessageId ? { sourceMessageId: flags.sourceMessageId ?? flags.__sourceMessageId } : {},
+    ...(flags.sourceIndexInChat ?? flags.__sourceIndexInChat) !== undefined ? { sourceIndexInChat: flags.sourceIndexInChat ?? flags.__sourceIndexInChat } : {}
+  };
+}
+function entryKind(entry, injected) {
+  if (entry.type === "world_info")
+    return "world";
+  if (["long_term_memory", "databank", "databank_mention"].includes(entry.type))
+    return "memory";
+  if (entry.type === "extension" || entry.extensionId)
+    return "extension";
+  if (entry.marker === "persona_description")
+    return "persona";
+  if (["char_description", "char_personality", "scenario", "dialogue_examples", "jailbreak"].includes(entry.marker ?? ""))
+    return "character";
+  return injected || ["authors_note", "utility"].includes(entry.type) ? "injection" : "system";
+}
+var RANK = { world: 0, memory: 0, extension: 0, persona: 1, character: 1, injection: 2, system: 2, story: 3, other: 3 };
+function free(start, end, covered) {
+  const result = [];
+  let cursor = start;
+  for (const [from, to] of covered) {
+    if (to <= cursor || from >= end)
+      continue;
+    if (from > cursor)
+      result.push([cursor, from]);
+    cursor = Math.max(cursor, to);
+  }
+  if (cursor < end)
+    result.push([cursor, end]);
+  return result;
+}
+function clean(text, size) {
+  const value = text.replace(/\s+/g, " ").trim();
+  return value.length > size ? `${value.slice(0, size - 1)}\u2026` : value;
+}
+function promptOutline(snapshot, messages, breakdown) {
+  const flags = messages, history = (m) => m?.__isChatHistory === true || m?.__chatHistorySource === true;
+  const firstHistory = flags.findIndex(history);
+  const entries = breakdown.filter((entry) => entry.type !== "chat_history" && entry.content?.trim()).map((entry) => ({ entry, text: entry.content.trim() }));
+  return snapshot.messages.map((message, index) => {
+    const source = flags[index], { body: text, role } = message;
+    const base = { role, preview: clean(text, 110), characters: text.length };
+    if (history(source)) {
+      const label = clean(source.name || (role === "user" ? "User" : role === "assistant" ? "Assistant" : "System"), 60);
+      const chatIndex = source.sourceIndexInChat ?? source.__sourceIndexInChat;
+      return { ...base, kind: "story", label, injected: false, ...chatIndex !== undefined ? { chatIndex } : {}, parts: [{ kind: "story", label, start: 0, end: text.length }] };
+    }
+    const injected = firstHistory >= 0 && index > firstHistory;
+    const fallback = source?.__worldInfoSource ? "world" : injected ? "injection" : "system";
+    const parts = [], covered = [];
+    const ranked = entries.map((item) => ({ ...item, kind: entryKind(item.entry, injected) })).sort((a, b) => RANK[a.kind] - RANK[b.kind] || b.text.length - a.text.length);
+    for (const { entry, text: content, kind } of ranked) {
+      if (content.length < MIN_SEARCH && content !== text.trim())
+        continue;
+      const start = text.indexOf(content);
+      if (start < 0)
+        continue;
+      const label = clean(entry.extensionName && kind === "extension" ? `${entry.extensionName}: ${entry.name}` : entry.name, 120);
+      for (const [from, to] of free(start, start + content.length, covered)) {
+        parts.push({ kind, label, start: from, end: to });
+        covered.push([from, to]);
+      }
+      covered.sort((a, b) => a[0] - b[0]);
+    }
+    for (const [from, to] of free(0, text.length, covered))
+      if (text.slice(from, to).trim())
+        parts.push({ kind: fallback, label: fallback === "world" ? "World info" : injected ? "Injected text" : "Prompt text", start: from, end: to });
+    parts.sort((a, b) => a.start - b.start);
+    const merged = [];
+    for (const part of parts) {
+      const last = merged.at(-1);
+      if (last?.label === part.label && last.kind === part.kind)
+        last.end = part.end;
+      else
+        merged.push({ ...part });
+    }
+    const bounded = merged.length > MAX_PARTS ? [...merged.slice(0, MAX_PARTS - 1), { ...merged[MAX_PARTS - 1], end: merged.at(-1).end, label: `${merged.length - MAX_PARTS + 1} more sources` }] : merged;
+    const largest = [...bounded].sort((a, b) => b.end - b.start - (a.end - a.start))[0];
+    const names = new Set(bounded.map((part) => part.label));
+    return {
+      ...base,
+      kind: largest?.kind ?? fallback,
+      injected,
+      parts: bounded,
+      label: largest ? `${largest.label}${names.size > 1 ? ` +${names.size - 1}` : ""}` : "Empty message"
+    };
+  });
+}
+function changedRange(before, after) {
+  const end = Math.min(before.length, after.length);
+  let prefix = 0, suffix = 0;
+  while (prefix < end && before.charCodeAt(prefix) === after.charCodeAt(prefix))
+    prefix++;
+  while (suffix < end - prefix && before.charCodeAt(before.length - suffix - 1) === after.charCodeAt(after.length - suffix - 1))
+    suffix++;
+  return { before: [prefix, Math.max(prefix + 1, before.length - suffix)], after: [prefix, Math.max(prefix + 1, after.length - suffix)] };
+}
+var touched = (turn, [from, to]) => (turn?.parts ?? []).filter((part) => part.start < to && part.end > from).map((part) => part.label);
+function buildTimeline(before, beforeOutline, after, afterOutline, comparison, tolerated = false) {
+  const rows = [];
+  const row = (status, oldIndex, newIndex, root, sources, headerChanged = false) => {
+    const turn = newIndex !== undefined ? afterOutline[newIndex] : beforeOutline?.[oldIndex], total = Math.max(1, turn.characters);
+    const names = [...new Set(sources)], culprit = status === "changed" ? turn.parts.find((part) => part.label === names[0]) : undefined;
+    const kind = culprit?.kind ?? turn.kind, label = culprit ? `${culprit.label}${names.length > 1 ? ` +${names.length - 1}` : ""}` : turn.label;
+    rows.push({
+      ...oldIndex !== undefined ? { oldIndex } : {},
+      ...newIndex !== undefined ? { newIndex } : {},
+      status,
+      ...root ? { root } : {},
+      role: turn.role,
+      kind,
+      label,
+      preview: turn.preview,
+      characters: turn.characters,
+      injected: turn.injected,
+      ...turn.chatIndex !== undefined ? { chatIndex: turn.chatIndex } : {},
+      headerChanged,
+      parts: turn.parts.map((part) => ({ kind: part.kind, label: part.label, share: (part.end - part.start) / total })),
+      sources: [...new Set(sources)]
+    });
+  };
+  if (!before)
+    afterOutline.forEach((turn, index) => row("base", undefined, index, false, turn.parts.map((part) => part.label)));
+  else {
+    const { pairs } = alignMessages(before.messages, after.messages);
+    let broken = comparison.routeChanged, consumed = 0;
+    for (const [oldIndex, newIndex] of pairs) {
+      if (oldIndex !== undefined)
+        consumed++;
+      const old = oldIndex === undefined ? undefined : before.messages[oldIndex], next = newIndex === undefined ? undefined : after.messages[newIndex];
+      if (old && next && old.header === next.header && old.body === next.body) {
+        row(broken ? "rewritten" : "kept", oldIndex, newIndex, false, []);
+        continue;
+      }
+      if (old && next) {
+        const range = changedRange(old.body, next.body), sources = [...touched(beforeOutline?.[oldIndex], range.before), ...touched(afterOutline[newIndex], range.after)];
+        if (!broken && consumed === before.messages.length && old.header === next.header && next.body.startsWith(old.body)) {
+          row("new", oldIndex, newIndex, false, sources);
+          continue;
+        }
+        row("changed", oldIndex, newIndex, !broken, sources, old.header !== next.header);
+        broken = true;
+        continue;
+      }
+      if (next) {
+        const sources = afterOutline[newIndex].parts.map((part) => part.label);
+        if (consumed === before.messages.length) {
+          row("new", undefined, newIndex, false, sources);
+          continue;
+        }
+        row("added", undefined, newIndex, !broken, sources);
+        broken = true;
+        continue;
+      }
+      row("removed", oldIndex, undefined, !broken, (beforeOutline?.[oldIndex].parts ?? []).map((part) => part.label));
+      broken = true;
+    }
+  }
+  const sum = (...statuses) => rows.filter((item) => statuses.includes(item.status) && item.newIndex !== undefined).reduce((n, item) => n + item.characters, 0);
+  return { rows, kept: sum("kept", "base"), rewritten: sum("rewritten", "changed", "added"), added: sum("new"), problems: rows.filter((item) => ["changed", "added", "removed"].includes(item.status)).length, tolerated, routeChanged: comparison.routeChanged };
+}
+
+// src/compare.ts
+import { createHash as createHash4 } from "crypto";
+var MAX_PROMPT_CHARACTERS = 32000000;
+function stableJson(value) {
+  return JSON.stringify(value, (_key, part) => {
+    if (!part || typeof part !== "object" || Array.isArray(part))
+      return part;
+    return Object.fromEntries(Object.keys(part).sort().map((key) => [key, part[key]]));
+  });
+}
+function fingerprint(value) {
+  return value === undefined ? undefined : `[sha256:${createHash4("sha256").update(value).digest("hex")} \xB7 ${value.length} characters]`;
+}
+function inspectPart(value) {
+  const part = { ...value };
+  delete part.cache_control;
+  if (["image", "audio", "video"].includes(String(part.type)) && typeof part.data === "string")
+    part.data = fingerprint(part.data);
+  if (typeof part.thought_signature === "string")
+    part.thought_signature = fingerprint(part.thought_signature);
+  return part;
+}
+function commonPrefix(a, b) {
+  const end = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < end && a.charCodeAt(i) === b.charCodeAt(i))
+    i++;
+  return i;
+}
+function snapshot(messages, context) {
+  const route = context.mainDispatch.descriptor;
+  const normalized = [];
+  let size = 0;
+  for (const message of messages) {
+    const wire = message;
+    const header = stableJson({
+      role: message.role,
+      name: message.name,
+      contentKind: typeof message.content === "string" ? "text" : "parts",
+      thought_signature: fingerprint(wire.thought_signature),
+      reasoning_content: message.reasoning_content,
+      thinking_blocks: message.thinking_blocks?.map((block) => ({ ...block, data: fingerprint(block.data), signature: fingerprint(block.signature) })),
+      reasoning_details: message.reasoning_details
+    });
+    const body = typeof message.content === "string" ? message.content : stableJson(message.content.map(inspectPart));
+    size += header.length + body.length;
+    if (size > MAX_PROMPT_CHARACTERS)
+      throw new Error("LumiCache cannot inspect prompts larger than 32 million characters. Turn monitoring off in LumiCache to send this request.");
+    normalized.push({ role: message.role, header, body });
+  }
+  return { at: Date.now(), model: route?.model ?? "Unresolved connection", route: stableJson(route ? {
+    connectionId: route.connectionId,
+    provider: route.provider,
+    model: route.model,
+    endpointOrigin: route.endpointOrigin,
+    revision: route.connectionDispatchRevision
+  } : { dispatchKind: context.mainDispatch.dispatchKind, revision: context.mainDispatch.connectionDispatchRevision }), messages: normalized };
+}
+function compare(before, after) {
+  const result = {
+    kind: "first",
+    routeChanged: false,
+    firstMessage: null,
+    commonMessages: 0,
+    commonCharacters: 0,
+    previousCharacters: before?.messages.reduce((n, m) => n + m.body.length, 0) ?? 0,
+    summary: "First request. A baseline will be kept after generation completes successfully."
+  };
+  if (!before)
+    return result;
+  result.routeChanged = before.route !== after.route;
+  let extended = false;
+  for (let index = 0;index < before.messages.length; index++) {
+    const old = before.messages[index], next = after.messages[index];
+    if (!next || old.header !== next.header) {
+      result.firstMessage = index;
+      break;
+    }
+    const prefix = commonPrefix(old.body, next.body);
+    result.commonCharacters += prefix;
+    if (old.body === next.body) {
+      result.commonMessages++;
+      continue;
+    }
+    if (index === before.messages.length - 1 && prefix === old.body.length) {
+      extended = true;
+      break;
+    }
+    result.firstMessage = index;
+    break;
+  }
+  if (result.routeChanged || result.firstMessage !== null) {
+    result.kind = "break";
+    result.summary = result.routeChanged ? "The connection, model or connection configuration changed." : `The previous prompt prefix changes at message ${result.firstMessage + 1} (${before.messages[result.firstMessage].role}).`;
+  } else {
+    result.kind = extended || after.messages.length > before.messages.length ? "append" : "same";
+    result.summary = result.kind === "append" ? "The previous prompt prefix is unchanged; new content follows it." : "The assembled prompt is unchanged.";
+  }
+  return result;
+}
+
+// src/shared.ts
+var DEFAULT_ACCEPTABLE_DEPTH = 2;
+var DEFAULT_SETTINGS = {
+  mode: "warn",
+  acceptableDepth: null,
+  acceptableTokens: null,
+  forceConsistency: false,
+  overflowPlacement: "end",
+  refreshEnabled: true,
+  refreshEvery: 20,
+  autoRefreshEnabled: false,
+  autoRefreshMinutes: 10,
+  autoRefreshLimit: 3,
+  hiddenCategories: []
+};
+var COVERAGE = "Compares assembled prompts before sending. Later host/provider changes, tools, cache expiry and provider cache state are not visible here. This is a cache-risk check, not a confirmed cache hit or miss.";
+function errorText(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// src/settings.ts
+var FILE = "settings.json";
+var SETTINGS_VERSION = 1;
+function saveSettings(storage, user, settings) {
+  return storage.setJson(FILE, { ...settings, settingsVersion: SETTINGS_VERSION }, { userId: user });
+}
+async function loadSettings(storage, user) {
+  const saved = await storage.getJson(FILE, { fallback: null, userId: user });
+  if (!saved)
+    return validateSettings(DEFAULT_SETTINGS);
+  if (saved.settingsVersion)
+    return validateSettings(saved);
+  const migrated = validateSettings(saved.acceptableDepth === 5 ? { ...saved, acceptableDepth: null } : saved);
+  try {
+    await saveSettings(storage, user, migrated);
+  } catch (error) {
+    console.warn("[LumiCache] Could not save migrated settings:", error);
+  }
+  return migrated;
+}
+function validateSettings(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Invalid cache settings.");
+  const v = value;
+  const result = { ...DEFAULT_SETTINGS, ...v };
+  if (!["pause", "warn", "off"].includes(result.mode))
+    throw new Error("Choose Pause, Warn or Off for LumiCache.");
+  for (const [key, max] of [["acceptableDepth", 1e5], ["acceptableTokens", 2000000], ["refreshEvery", 1e5], ["autoRefreshMinutes", 1440], ["autoRefreshLimit", 1000]]) {
+    const n = result[key];
+    const required = key !== "acceptableDepth" && key !== "acceptableTokens";
+    if (!required && n === null)
+      continue;
+    if (typeof n !== "number" || !Number.isInteger(n) || n < (required ? 1 : 0) || n > max)
+      throw new Error(`Invalid ${key}: enter a whole number${required ? " greater than zero" : " or leave the limit blank"}.`);
+  }
+  for (const key of ["forceConsistency", "refreshEnabled", "autoRefreshEnabled"])
+    if (typeof result[key] !== "boolean")
+      throw new Error(`Invalid ${key}.`);
+  if (!["end", "boundary"].includes(result.overflowPlacement))
+    throw new Error("Choose a valid injection destination.");
+  if (!Array.isArray(result.hiddenCategories) || result.hiddenCategories.some((k) => !["risk", "issue", "depth", "variabled"].includes(k)))
+    throw new Error("Invalid category filters.");
+  return {
+    mode: result.mode,
+    acceptableDepth: result.acceptableDepth,
+    acceptableTokens: result.acceptableTokens,
+    forceConsistency: result.forceConsistency,
+    overflowPlacement: result.overflowPlacement,
+    refreshEnabled: result.refreshEnabled,
+    refreshEvery: result.refreshEvery,
+    autoRefreshEnabled: result.autoRefreshEnabled,
+    autoRefreshMinutes: result.autoRefreshMinutes,
+    autoRefreshLimit: result.autoRefreshLimit,
+    hiddenCategories: [...new Set(result.hiddenCategories)]
+  };
+}
+
+// src/consistency.ts
+var historyMessage = (m) => m.__isChatHistory === true;
+var identity = (m) => m.sourceMessageId;
+var wire = (m) => stableJson({ ...m, sourceMessageMetadata: undefined, sourceMessageId: undefined, sourceIndexInChat: undefined, __isChatHistory: undefined });
+function retain(messages) {
+  let size = 0;
+  const result = messages.map((m) => {
+    const copy = { ...m };
+    delete copy.sourceMessageMetadata;
+    size += stableJson(copy).length;
+    if (size > MAX_PROMPT_CHARACTERS)
+      throw new Error("The prompt exceeds LumiCache's retention limit. Reset the baseline or turn monitoring off.");
+    return structuredClone(copy);
+  });
+  return { messages: result, size };
+}
+async function tailStart(messages, policy, context, count) {
+  const indices = messages.flatMap((m, i) => historyMessage(m) ? [i] : []);
+  if (!indices.length)
+    return { index: messages.length, approximate: false };
+  const depth = policy.acceptableDepth ?? DEFAULT_ACCEPTABLE_DEPTH;
+  let index = depth === 0 ? messages.length : indices[Math.max(0, indices.length - depth)];
+  let approximate = false;
+  if (policy.acceptableTokens !== null) {
+    if (!count)
+      throw new Error("The host token counter is unavailable. Leave the token limit blank to use message depth.");
+    const candidates = [...indices.filter((i) => i >= index), messages.length];
+    let lo = 0, hi = candidates.length - 1;
+    while (lo < hi) {
+      context.signal.throwIfAborted();
+      const mid = Math.floor((lo + hi) / 2);
+      const result = await count(messages.slice(candidates[mid]).filter(historyMessage), context);
+      approximate ||= result.approximate;
+      if (!Number.isFinite(result.total_tokens) || result.total_tokens < 0)
+        throw new Error("The host returned an invalid token count.");
+      if (result.total_tokens <= policy.acceptableTokens)
+        hi = mid;
+      else
+        lo = mid + 1;
+    }
+    index = candidates[lo];
+  }
+  if (index < messages.length)
+    while (index > indices[0] && !historyMessage(messages[index - 1]))
+      index--;
+  return { index, approximate };
+}
+function keyed(messages) {
+  const occurrences = new Map;
+  return messages.filter(historyMessage).map((message) => {
+    const id = identity(message);
+    if (!id)
+      throw new Error("Force cache consistency needs source message IDs. Disable it for a prompt whose history identity was removed by another extension.");
+    const n = occurrences.get(id) ?? 0;
+    occurrences.set(id, n + 1);
+    return { key: `${id}:${n}`, message };
+  });
+}
+function historyUnchanged(before, after) {
+  try {
+    const a = keyed(before), b = new Map(keyed(after).map((x) => [x.key, x.message]));
+    return a.length > 0 && a.every((x) => b.has(x.key) && wire(x.message) === wire(b.get(x.key)));
+  } catch {
+    return false;
+  }
+}
+function followChat(before, now, released) {
+  const newest = now.at(-1);
+  if (!newest)
+    return before;
+  const index = newest.message.sourceIndexInChat, live = new Map(now.map((x) => [x.key, x.message]));
+  const history = keyed(before);
+  const broken = history.find((x) => {
+    const message = live.get(x.key);
+    if (!message)
+      return index !== undefined && x.message.sourceIndexInChat !== undefined && x.message.sourceIndexInChat >= index;
+    return (x.key === newest.key || released.has(identity(x.message))) && wire(message) !== wire(x.message);
+  });
+  if (!broken)
+    return before;
+  const first = before.indexOf(history[0].message);
+  let cut = before.indexOf(broken.message);
+  while (cut > first && !historyMessage(before[cut - 1]))
+    cut--;
+  return before.slice(0, cut);
+}
+async function preserve(saved, current, policy, context, count, released = new Set) {
+  const now = keyed(current), before = saved && followChat(saved, now, released), old = before ? keyed(before) : [];
+  const oldKeys = new Set(old.map((x) => x.key));
+  const maxOldIndex = old.reduce((max, x) => Math.max(max, x.message.sourceIndexInChat ?? -1), -1);
+  const added = now.filter((x) => !oldKeys.has(x.key) && (!old.length || x.message.sourceIndexInChat !== undefined && x.message.sourceIndexInChat > maxOldIndex));
+  if (old.length && now.some((x) => !oldKeys.has(x.key) && x.message.sourceIndexInChat === undefined))
+    throw new Error("Force cache consistency cannot order new history without source indexes.");
+  const ledger = before ? [...old, ...added] : now;
+  const first = current.findIndex(historyMessage);
+  const oldBoundary = before ? await tailStart(before, policy, context, count) : { index: 0, approximate: false };
+  const prefix = before ? before.slice(0, oldBoundary.index) : first < 0 ? [...current] : current.slice(0, first);
+  const frozen = new Set(keyed(prefix).map((x) => x.key));
+  const tail = ledger.filter((x) => !frozen.has(x.key));
+  const base = [...prefix, ...tail.map((x) => x.message)];
+  const boundary = await tailStart(base, policy, context, count);
+  const minimum = Math.max(prefix.length, boundary.index);
+  const baseIndices = new Map(base.map((m, i) => [m, i]));
+  const positions = new Map(ledger.map((x) => [x.key, baseIndices.get(x.message) ?? -1]));
+  const nowKeys = new Map(now.map((x) => [x.message, x.key]));
+  const injections = [];
+  let relocated = 0;
+  if (!(before && !added.length && oldBoundary.index === before.length)) {
+    let nextKey;
+    for (let i = current.length - 1;i > first && first >= 0; i--) {
+      const m = current[i];
+      if (historyMessage(m)) {
+        nextKey = nowKeys.get(m);
+        continue;
+      }
+      let index = nextKey ? positions.get(nextKey) ?? base.length : base.length;
+      if (index < minimum) {
+        index = policy.overflowPlacement === "end" ? base.length : minimum;
+        relocated++;
+      }
+      injections.push({ message: m, index, order: i });
+    }
+  }
+  injections.sort((a, b) => b.index - a.index || b.order - a.order);
+  for (const injection of injections)
+    base.splice(injection.index, 0, injection.message);
+  const currentByKey = new Map(now.map((x) => [x.key, x.message]));
+  const restored = before ? old.filter((x) => {
+    const m = currentByKey.get(x.key);
+    return !m || wire(m) !== wire(x.message);
+  }).length + Number(wireList(before.slice(0, before.findIndex(historyMessage) < 0 ? before.length : before.findIndex(historyMessage))) !== wireList(current.slice(0, first < 0 ? current.length : first))) : 0;
+  return { messages: base, restored, relocated, approximate: oldBoundary.approximate || boundary.approximate };
+}
+var wireList = (messages) => messages.map(wire).join(`
+`);
+
+// src/guard.ts
+var MISS_TOKENS = 1024;
+var MISS_SHARE = 0.05;
+var MAX_RELEASED_CHATS = 256;
+var MAX_RELEASED_MESSAGES = 256;
+
+class Guard {
+  onChange;
+  countTokens;
+  store;
+  toast;
+  chats = new Map;
+  pending = new Map;
+  candidates = new Map;
+  released = new Map;
+  releaseCount = 0;
+  constructor(onChange, countTokens, store, toast) {
+    this.onChange = onChange;
+    this.countTokens = countTokens;
+    this.store = store;
+    this.toast = toast;
+  }
+  async toastBreak(messages, check, context, tone, title, message) {
+    if (!this.toast)
+      return;
+    const first = Math.max(0, Math.min(check.comparison.firstMessage ?? 0, messages.length - 1));
+    let tokens = Math.ceil(check.after.messages.slice(first).reduce((total, message) => total + message.body.length, 0) / 4), approximate = true;
+    if (this.countTokens) {
+      try {
+        const counted = await this.countTokens(messages.slice(first), context);
+        if (Number.isFinite(counted.total_tokens)) {
+          tokens = counted.total_tokens;
+          approximate = counted.approximate;
+        }
+      } catch {}
+    }
+    const who = context.label ? `${context.label}: ` : "";
+    try {
+      this.toast(context.userId, tone, `${who}${title(messages.length - first)}`, message(`${approximate ? "~" : ""}${tokens.toLocaleString("en-US")}`));
+    } catch (error) {
+      console.warn("[LumiCache] Could not show the cache toast:", error);
+    }
+  }
+  notify(user, chatId, session) {
+    try {
+      this.onChange(user, chatId, session);
+    } catch {}
+  }
+  disconnect(user, session) {
+    for (const pending of this.pending.values()) {
+      if (pending.userId !== user || pending.session !== session)
+        continue;
+      pending.session = undefined;
+      this.notify(user, pending.check.chatId);
+    }
+  }
+  chatStates(user, chat) {
+    return [...this.chats].filter(([key]) => {
+      const [owner, id] = JSON.parse(key);
+      return owner === user && id === chat;
+    });
+  }
+  shown(user, chat) {
+    const states = this.chatStates(user, chat).map(([, state]) => state);
+    return states.find((state) => state.check && this.pending.has(state.check.id)) ?? states.at(-1);
+  }
+  resume(user, chat, session) {
+    const check = this.shown(user, chat)?.check;
+    const pending = check && this.pending.get(check.id);
+    if (pending && pending.userId === user && !pending.session && Date.now() < pending.check.deadline)
+      pending.session = session;
+  }
+  reserve(current, next) {
+    const retained = () => {
+      const snapshots = new Set;
+      for (const state of this.chats.values()) {
+        const check = state === current ? next : state.check;
+        for (const value of [state.baseline, check?.before, check?.after])
+          if (value)
+            snapshots.add(value);
+      }
+      let size = 0;
+      for (const value of snapshots)
+        for (const message of value.messages)
+          size += message.header.length + message.body.length;
+      for (const state of this.chats.values())
+        size += (state.retained?.size ?? 0) + (state.candidate?.size ?? 0);
+      return size;
+    };
+    while (retained() > 256000000) {
+      const oldest = [...this.chats].find(([, state]) => state !== current && !state.busy);
+      if (!oldest)
+        throw new Error("LumiCache's active prompt memory is full. Finish or stop another generation before retrying.");
+      this.chats.delete(oldest[0]);
+    }
+  }
+  key(user, chat, scope) {
+    return JSON.stringify(scope ? [user, chat, scope] : [user, chat]);
+  }
+  state(user, chat, scope) {
+    const key = this.key(user, chat, scope);
+    let state = this.chats.get(key);
+    if (!state) {
+      if (this.chats.size >= 48) {
+        const oldest = [...this.chats].find(([, value]) => !value.busy);
+        if (!oldest)
+          throw new Error("LumiCache is inspecting too many chats. Finish a pending generation first.");
+        this.chats.delete(oldest[0]);
+      }
+      state = { baseline: null, check: null, busy: false, replies: 0 };
+    }
+    this.chats.delete(key);
+    this.chats.set(key, state);
+    return state;
+  }
+  chatIds(user) {
+    return [...this.chats.keys()].map((key) => JSON.parse(key)).filter(([owner]) => owner === user).map(([, chat]) => chat).filter((chat, index, all) => all.indexOf(chat) === index);
+  }
+  view(user, chat, session) {
+    const state = chat ? this.shown(user, chat) : undefined;
+    const pending = state?.check ? this.pending.get(state.check.id) : undefined;
+    return { check: state?.check ?? null, hasBaseline: !!state?.baseline, canDecide: !!pending && !!session && pending.session === session };
+  }
+  unwatched(user, chat) {
+    const state = this.chats.get(this.key(user, chat));
+    if (state && !state.busy) {
+      state.baseline = null;
+      state.retained = undefined;
+      state.restored = false;
+      state.replies = 0;
+    }
+  }
+  release(user, chat, messageId) {
+    const key = this.key(user, chat), ids = this.released.get(key) ?? new Map;
+    ids.delete(messageId);
+    ids.set(messageId, ++this.releaseCount);
+    if (ids.size > MAX_RELEASED_MESSAGES)
+      ids.delete(ids.keys().next().value);
+    this.released.delete(key);
+    this.released.set(key, ids);
+    if (this.released.size > MAX_RELEASED_CHATS)
+      this.released.delete(this.released.keys().next().value);
+  }
+  releasedFor(user, chat, state) {
+    const through = state.releasedThrough ?? 0;
+    return new Set([...this.released.get(this.key(user, chat)) ?? []].filter(([, count]) => count > through).map(([id]) => id));
+  }
+  forget(user, chat) {
+    this.released.delete(this.key(user, chat));
+    this.store?.clear(user, chat);
+  }
+  clear(user, chat) {
+    const states = this.chatStates(user, chat);
+    if (states.some(([, state]) => state.busy))
+      throw new Error("Finish or stop this generation before clearing its baseline.");
+    for (const [key] of states)
+      this.chats.delete(key);
+    this.store?.clear(user, chat);
+    this.notify(user, chat);
+  }
+  decide(user, session, id, allow) {
+    const pending = this.pending.get(id);
+    if (!pending || !session || pending.userId !== user || pending.session !== session)
+      throw new Error("This review expired or belongs to another browser session.");
+    pending.settle(allow);
+  }
+  async inspect(messages, context, settings, epoch = null) {
+    if (context.isDryRun || settings.mode === "off")
+      return messages;
+    context.signal.throwIfAborted();
+    const state = this.state(context.userId, context.chatId, context.scope);
+    if (state.busy)
+      throw new Error("LumiCache is already inspecting a generation in this chat. Wait for it to finish or stop it first.");
+    state.busy = true;
+    let check;
+    try {
+      const config = validateSettings(settings);
+      if (this.store && !state.restored) {
+        state.restored = true;
+        try {
+          const saved = await this.store.load(context.userId, context.chatId, context.scope);
+          if (saved && !state.baseline) {
+            state.baseline = { ...snapshot(saved.messages, context), at: saved.at, route: saved.route, model: saved.model };
+            state.retained = retain(saved.messages);
+            state.replies = saved.replies;
+            state.epoch = saved.epoch;
+          }
+        } catch (error) {
+          console.warn("[LumiCache] Could not read the saved baseline:", error);
+        }
+        context.signal.throwIfAborted();
+      }
+      const releasedThrough = this.releaseCount;
+      const incoming = snapshot(messages, context);
+      const epochChanged = epoch !== (state.epoch ?? null);
+      const planned = !!state.baseline && epoch !== null && epochChanged;
+      const refresh = !!state.baseline && (epochChanged || epoch === null && config.forceConsistency && config.refreshEnabled && state.replies >= config.refreshEvery);
+      const routeChanged = !!state.baseline && state.baseline.route !== incoming.route;
+      let policy;
+      if (refresh && !routeChanged)
+        policy = { action: "refresh", restored: 0, relocated: 0, replies: state.replies, approximate: false };
+      else if (config.forceConsistency && !routeChanged) {
+        const result = await preserve(state.retained?.messages ?? null, messages, config, context, this.countTokens, this.releasedFor(context.userId, context.chatId, state));
+        messages = result.messages;
+        policy = { action: state.retained ? "preserved" : "seed", restored: result.restored, relocated: result.relocated, replies: state.replies, approximate: result.approximate };
+      }
+      context.signal.throwIfAborted();
+      const after = snapshot(messages, context);
+      check = {
+        id: crypto.randomUUID(),
+        chatId: context.chatId,
+        generationId: context.generationId,
+        deadline: Math.min(Date.now() + 290000, context.interceptorDeadlineAt - 1000),
+        status: "allowed",
+        comparison: compare(state.baseline, after),
+        before: state.baseline,
+        after,
+        policy
+      };
+      if (context.label)
+        check.comparison.summary = `${context.label}: ${check.comparison.summary}`;
+      let tolerated = false;
+      if (check.comparison.kind === "break" && !routeChanged && state.retained && historyUnchanged(state.retained.messages, messages)) {
+        const boundary = await tailStart(state.retained.messages, config, context, this.countTokens);
+        tolerated = check.comparison.firstMessage !== null && check.comparison.firstMessage >= boundary.index;
+        if (tolerated && !policy)
+          check.policy = { action: "tolerated", restored: 0, relocated: 0, replies: state.replies, approximate: boundary.approximate };
+      }
+      if (state.baseline) {
+        try {
+          check.timeline = buildTimeline(state.baseline, promptOutline(state.baseline, state.retained?.messages ?? [], []), after, promptOutline(after, messages, []), check.comparison, tolerated);
+        } catch (error) {
+          console.warn("[LumiCache] Could not build the live timeline:", error);
+        }
+      }
+      const retained = retain(messages);
+      state.candidate = retained;
+      if (check.policy)
+        check.policy.accepted = tolerated || refresh && !routeChanged || check.comparison.kind !== "break";
+      this.reserve(state, check);
+      state.check = check;
+      const alarming = check.comparison.kind === "break" && !tolerated && !(refresh && !routeChanged);
+      if (alarming && settings.mode === "pause") {
+        check.status = "waiting";
+        const review = check;
+        await new Promise((resolve, reject) => {
+          const settle = (allow, reason) => {
+            clearTimeout(timer);
+            context.signal.removeEventListener("abort", abort);
+            this.pending.delete(review.id);
+            if (allow && !context.signal.aborted && Date.now() < review.deadline)
+              resolve();
+            else
+              reject(new Error(reason ?? "LumiCache cancelled this request before sending."));
+          };
+          const abort = () => settle(false, "Generation stopped while reviewing the prompt.");
+          const timer = setTimeout(() => settle(false, "LumiCache review expired. Retry sending to review it again."), Math.max(0, review.deadline - Date.now()));
+          this.pending.set(review.id, { userId: context.userId, session: context.frontendSessionId, check: review, settle });
+          context.signal.addEventListener("abort", abort, { once: true });
+          if (context.signal.aborted)
+            abort();
+          else
+            this.notify(context.userId, context.chatId, context.frontendSessionId);
+        });
+      }
+      context.signal.throwIfAborted();
+      check.status = "allowed";
+      if (alarming && settings.mode === "warn")
+        this.toastBreak(messages, check, context, "warning", (depth) => `Cache has been broken at depth ${depth}!`, (tokens) => `${tokens} tokens will be recached \uD83D\uDCB8.`);
+      else if (planned && check.comparison.kind === "break" && !routeChanged)
+        this.toastBreak(messages, check, context, "success", () => "LumiBooks Compaction Successful.", (tokens) => `Gracefully re-caching ${tokens} tokens \uD83D\uDC96.`);
+      this.candidates.set(this.key(context.userId, context.generationId), { key: this.key(context.userId, context.chatId, context.scope), userId: context.userId, check, retained, refresh, epoch, connection: context.mainDispatch.descriptor?.connectionId, alarming, releasedThrough });
+      this.notify(context.userId, context.chatId, context.frontendSessionId);
+      return messages;
+    } catch (error) {
+      if (check) {
+        this.pending.get(check.id)?.settle(false);
+        check.status = "cancelled";
+      }
+      state.busy = false;
+      state.candidate = undefined;
+      this.notify(context.userId, context.chatId, context.frontendSessionId);
+      throw error;
+    }
+  }
+  prompt(user, chat) {
+    const state = this.chats.get(this.key(user, chat));
+    return state?.baseline && state.retained && state.connection ? { messages: state.retained.messages, connectionId: state.connection, model: state.baseline.model } : null;
+  }
+  reportCache(user, state, check, alarming, usage) {
+    const expected = state.cached, read = usage?.read;
+    state.cached = read === undefined ? undefined : read + (usage?.write ?? 0);
+    if (!this.toast || !expected || read === undefined)
+      return;
+    const lost = expected - read, { kind, routeChanged, firstMessage } = check.comparison;
+    if (lost < MISS_TOKENS || lost < expected * MISS_SHARE || kind === "break" && !alarming)
+      return;
+    const format = (tokens) => tokens.toLocaleString("en-US");
+    const cause = routeChanged ? "The model or connection changed." : kind === "break" ? `The prompt changed at depth ${check.after.messages.length - Math.min(firstMessage ?? 0, check.after.messages.length - 1)}.` : "The prompt didn't change, so the cache likely expired.";
+    try {
+      this.toast(user, "warning", `Cache miss: ${format(lost)} tokens`, `The provider read ${format(read)} of ${format(expected)} cached tokens. ${cause}`);
+    } catch (error) {
+      console.warn("[LumiCache] Could not show the cache toast:", error);
+    }
+  }
+  finish(user, generation, success, replyId, usage) {
+    const key = this.key(user, generation), candidate = this.candidates.get(key);
+    if (!candidate)
+      return false;
+    this.candidates.delete(key);
+    const state = this.chats.get(candidate.key);
+    if (!state || state.check !== candidate.check)
+      return false;
+    state.busy = false;
+    candidate.check.status = success ? "completed" : "failed";
+    state.candidate = undefined;
+    if (success) {
+      this.reportCache(user, state, candidate.check, candidate.alarming, usage);
+      state.baseline = candidate.check.after;
+      state.retained = candidate.retained;
+      state.replies = candidate.refresh ? 1 : state.replies + 1;
+      state.epoch = candidate.epoch;
+      state.connection = candidate.connection;
+      state.releasedThrough = candidate.releasedThrough;
+      const [, chat, scope] = JSON.parse(candidate.key), after = candidate.check.after;
+      this.store?.save(user, chat, scope, { at: after.at, route: after.route, model: after.model, messages: candidate.retained.messages, replies: state.replies, epoch: state.epoch }, replyId);
+    }
+    this.notify(user, candidate.check.chatId);
+    return success;
+  }
+}
+
+// src/host-context.ts
+async function connectionDispatch(api, connectionId, userId, model) {
+  const connection = connectionId ? await api.connections.get(connectionId, userId) : (await api.connections.list(userId)).find((connection) => connection.is_default);
+  if (!connection)
+    throw new Error("LumiCache could not inspect the selected connection.");
+  let origin = "Provider default endpoint";
+  if (connection.api_url) {
+    try {
+      origin = new URL(connection.api_url).origin;
+    } catch {
+      throw new Error("LumiCache could not read the selected connection endpoint.");
+    }
+  }
+  const revision = `${connection.id}:${connection.updated_at}`;
+  return { descriptor: { connectionId: connection.id, provider: connection.provider, model, endpointOrigin: origin, connectionDispatchRevision: revision }, connectionDispatchRevision: revision, dispatchKind: "concrete" };
+}
+
+class HostContexts {
+  active = new Map;
+  key(user, chat) {
+    return JSON.stringify([user, chat]);
+  }
+  start(user, event) {
+    this.active.set(this.key(user, event.chatId), event);
+  }
+  isActive(user, chat) {
+    return this.active.has(this.key(user, chat));
+  }
+  finish(user, event) {
+    const key = this.key(user, event.chatId);
+    if (this.active.get(key)?.generationId === event.generationId)
+      this.active.delete(key);
+  }
+  async resolve(raw, api) {
+    const started = this.active.get(this.key(raw.userId, raw.chatId));
+    if (!started || raw.generationId && raw.generationId !== started.generationId)
+      throw new Error("LumiCache could not match this prompt to its live generation. Stop and retry the request.");
+    const dispatch = raw.mainDispatch ?? await connectionDispatch(api, raw.connectionId, raw.userId, started.model);
+    raw.signal.throwIfAborted();
+    if (this.active.get(this.key(raw.userId, raw.chatId)) !== started)
+      throw new Error("The generation ended while LumiCache was preparing its check.");
+    return {
+      userId: raw.userId,
+      chatId: raw.chatId,
+      generationId: started.generationId,
+      frontendSessionId: raw.frontendSessionId ?? started.frontendSessionId,
+      isDryRun: raw.isDryRun === true || raw.dryRun === true,
+      signal: raw.signal,
+      interceptorDeadlineAt: raw.interceptorDeadlineAt ?? Date.now() + 295000,
+      mainDispatch: dispatch
+    };
+  }
+}
+
+// src/health/service.ts
+import { createHash as createHash5 } from "crypto";
+
+// src/health/depth.ts
+async function classifyDepth(report, settings, messages, api, userId) {
+  const policy = validateSettings(settings);
+  const history = messages.filter((m) => m.__isChatHistory || m.__chatHistorySource === true);
+  const counts = new Map;
+  for (const finding of report.findings) {
+    if (finding.level !== "depth")
+      continue;
+    const depth = finding.depth ?? 0;
+    finding.problematic = depth > (policy.acceptableDepth ?? DEFAULT_ACCEPTABLE_DEPTH);
+    if (policy.acceptableTokens !== null) {
+      if (!counts.has(depth) && (history.length || depth === 0) && api) {
+        const value = depth === 0 ? { total_tokens: 0, approximate: false } : await api.tokens.countMessages(history.slice(-depth), { model: report.model, userId });
+        counts.set(depth, value);
+      }
+      const result = counts.get(depth);
+      if (result) {
+        finding.depthTokens = result.total_tokens;
+        finding.tokenEstimate = result.approximate;
+      }
+      finding.problematic ||= !result || result.total_tokens > policy.acceptableTokens;
+      finding.detail = result ? `${depth} history messages \xB7 ${result.approximate ? "approximately " : ""}${result.total_tokens.toLocaleString()} tokens behind this position.` : "The host did not expose enough history placement data to verify this token limit.";
+    }
+    finding.suggestion = finding.problematic ? "Outside your allowed tail. Force consistency can move it to the end or the allowed boundary." : "Within your configured tolerance. This is not a guarantee of a provider cache hit.";
+  }
+  return report;
 }
 
 // src/health/sources.ts
@@ -3671,7 +3744,7 @@ var AGENT_DOCS = [
     text: `LumiCache checks assembled outgoing prompt prefixes for cache risk. It does not control or observe provider cache state. Later host/provider transformations, tools, expiry and routing can still affect caching.
 UI: drawer > LumiCache > Health | Simulation | Cache Diff; gear opens settings. Native sends, continuations, regenerations and swipes are monitored; dry runs are not. The first successful reply establishes a baseline. Only successful generations advance it; stopped/failed/cancelled requests do not. Baselines are per user/chat/sender, held in memory, and reset on extension restart or eviction.
 Cache Diff shows first/same/append/break, first changed message, matching prefix, route changes and current status. Expand changed messages for body/metadata diffs; page, jump to next change/row, expand unchanged context, show whitespace, wrap lines or include unchanged messages.
-Pause and review blocks an unacceptable break until the sending browser chooses Send anyway or Cancel send before the displayed deadline. Closing the modal is not cancellation. A disconnected review stays blocked; reconnect/open the chat to recover it before expiry. Warn and send shows a toast with the break depth and tokens to recache, without blocking. A LumiBooks planned break shows a success toast on the first send that sees it, in Warn and Pause modes. Off skips monitoring and consistency rewriting.
+Pause and review blocks an unacceptable break until the sending browser chooses Send anyway or Cancel send before the displayed deadline. Closing the modal is not cancellation. A disconnected review stays blocked; reconnect/open the chat to recover it before expiry. Warn and send shows a toast with the break depth and tokens to recache, without blocking. A LumiBooks planned break shows a success toast on the first send that sees it, in Warn and Pause modes. Off skips monitoring and consistency rewriting. When the provider reports cache usage, a Cache miss toast appears after a reply that read noticeably fewer cached tokens than the last reply left, with the likely cause: a break, a model change, or expiry if the prompt didn't change. The first reply after a restart has nothing to compare with, and direct Google needs a Lumiverse build that passes its cached count through.
 Reset comparison (gear) clears the chat's native and CAT baselines; the next successful request starts fresh. Finish/stop any generation first. LumiAgent cannot decide a paused send, reset comparisons or change settings.`
   },
   {
@@ -3679,8 +3752,8 @@ Reset comparison (gear) clears the chat's native and CAT baselines; the next suc
     label: "Settings, mutable tail and forced consistency",
     text: `Settings are per user; edit the gear panel then Save settings. Defaults: mode=warn, acceptableDepth=blank (uses 2), acceptableTokens=null, forceConsistency=false, overflowPlacement=end, refreshEnabled=true, refreshEvery=20, autoRefreshEnabled=false, autoRefreshMinutes=10, autoRefreshLimit=3.
 Mutable tail: acceptableDepth counts history messages from the most recent (0 allows none; blank uses the default of 2). History token limit bounds that tail using Lumiverse's possibly approximate tokenizer (blank ignores tokens). Both set limits apply. The tail never includes the leading instruction prefix. Ordinary tail tolerance requires existing history content/identity to remain unchanged. Connection/model/dispatch changes still count as breaks.
-Force cache consistency restores the previous outgoing protected prefix, instructions/lore and prior history content; newly appended history remains. Fresh out-of-range injections move after the last message (end) or to the allowed boundary (boundary). Visible chat edits remain intact but may not reach the model until refresh/reset; frozen guidance may remain in old history. Requires preserved history source IDs and indexes; another extension stripping them can make it fail. Context limits still apply.
-Allow scheduled cache breaks accepts current content after refreshEvery successful replies, then establishes a new baseline on success. It only runs with forced consistency, since a prompt that is not frozen has nothing to release. A published LumiBooks epoch replaces the timer; route changes still require normal review. Reset comparison applies current content on the next successful send.
+Force cache consistency restores the previous outgoing protected prefix, instructions/lore and prior history content; newly appended history remains. Fresh out-of-range injections move after the last message (end) or to the allowed boundary (boundary). Edits or swipes that change a message's sent text release it and everything newer; only older messages stay frozen. Frozen guidance may remain in old history. Requires preserved history source IDs and indexes; another extension stripping them can make it fail. Context limits still apply.
+Allow scheduled cache breaks accepts current content after refreshEvery successful replies, then establishes a new baseline on success. It only runs with forced consistency, since a prompt that is not frozen has nothing to release. In LumiBooks Cache Friendly mode, its epoch replaces the timer; route changes still require normal review. Reset comparison applies current content on the next successful send.
 Keep Cache Warm (autoRefreshEnabled) resends the last successful prompt of the chat the user sent in last, with minimal output, every autoRefreshMinutes up to autoRefreshLimit times per reply. Each one is billed. Turn it on or off from the input bar drawer or settings; while it runs, a banner above the input shows a spinner and a Stop button that turns it off. A new reply restarts the count; deleting a message stops the current run, and it stops itself after a cache miss, an error or a model change. It needs monitoring on and cannot repeat native tools.
 Health category filters (risk/issue/depth) affect display only. They do not change the send policy.`
   },
@@ -4317,7 +4390,7 @@ class CatBridge {
         mainDispatch: await connectionDispatch(this.api, request.connectionId, request.userId, request.model),
         scope: request.slotId,
         label: request.label
-      }, settings, await this.epoch(request.chatId));
+      }, settings, await this.epoch(request.userId, request.chatId));
       this.publish(request.id, { status: "done", messages });
     } catch (error) {
       this.publish(request.id, { status: "error", error: errorText(error) });
@@ -4367,15 +4440,21 @@ function settings(user) {
   return current;
 }
 spindle.rpcPool.sync("status", { version: 1 }, { requires: [] });
-async function plannedBreakEpoch(chatId) {
+async function readLumiBooks(endpoint) {
   try {
-    const value = await spindle.rpcPool.read(`lumi_books.cache_epoch.${chatId}`);
-    return typeof value?.epoch === "string" ? value.epoch : null;
+    return await spindle.rpcPool.read(`lumi_books.${endpoint}`);
   } catch (error) {
     if (/not registered/i.test(errorText(error)))
       return null;
     throw error;
   }
+}
+async function plannedBreakEpoch(user, chatId) {
+  const mode = await readLumiBooks(`cache_mode.${user}`);
+  if (mode?.cacheFriendly !== true)
+    return null;
+  const chat = await readLumiBooks(`cache_epoch.${chatId}`);
+  return `${mode.codexEnabled === false ? "no-codex" : "codex"}:${typeof chat?.epoch === "string" ? chat.epoch : ""}`;
 }
 function text(value) {
   if (typeof value !== "string" || !value || value.length > 200)
@@ -4397,6 +4476,12 @@ spindle.on("MESSAGE_DELETED", (event, user) => {
   if (user && typeof chat === "string")
     autoRefresh.cancel(user, chat);
 });
+for (const name of ["MESSAGE_EDITED", "MESSAGE_SWIPED", "SWIPE_EDITED"])
+  spindle.on(name, (event, user) => {
+    const { chatId, message } = event;
+    if (user && typeof chatId === "string" && typeof message?.id === "string")
+      guard.release(user, chatId, message.id);
+  });
 spindle.on("GENERATION_STARTED", (event, user) => {
   if (user) {
     contexts.start(user, event);
@@ -4412,7 +4497,7 @@ spindle.registerInterceptor(async (messages, context) => {
     guard.unwatched(raw.userId, raw.chatId);
     return messages;
   }
-  return guard.inspect(messages, await contexts.resolve(raw, spindle), config, await plannedBreakEpoch(raw.chatId));
+  return guard.inspect(messages, await contexts.resolve(raw, spindle), config, await plannedBreakEpoch(raw.userId, raw.chatId));
 }, {
   priority: 2000000000,
   required: true,
@@ -4422,7 +4507,8 @@ spindle.on("GENERATION_ENDED", (event, user) => {
   if (!user)
     return;
   contexts.finish(user, event);
-  if (guard.finish(user, event.generationId, !event.error, event.messageId))
+  const usage = sentUsage(event.usage);
+  if (guard.finish(user, event.generationId, !event.error, event.messageId, usage))
     settings(user).then((config) => autoRefresh.start(user, event.chatId, validateSettings(config)), (error) => console.warn("[LumiCache] Could not start auto-refresh:", error));
 });
 spindle.on("GENERATION_STOPPED", (event, user) => {

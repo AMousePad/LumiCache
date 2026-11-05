@@ -1,5 +1,6 @@
 import type { SpindleAPI } from "lumiverse-spindle-types";
 import { BaselineStore } from "./baseline";
+import { sentUsage } from "./health/analyze";
 import { Guard } from "./guard";
 import { HostContexts, type HostContext } from "./host-context";
 import { errorText, type Settings } from "./shared";
@@ -40,14 +41,20 @@ function settings(user: string): Promise<Settings> {
 }
 /** LumiBooks Cache Friendly mode checks for this endpoint. */
 spindle.rpcPool.sync("status", { version: 1 }, { requires: [] });
-async function plannedBreakEpoch(chatId: string): Promise<string | null> {
+async function readLumiBooks<T>(endpoint: string): Promise<T | null> {
   try {
-    const value = await spindle.rpcPool.read<{ epoch?: unknown } | null>(`lumi_books.cache_epoch.${chatId}`);
-    return typeof value?.epoch === "string" ? value.epoch : null;
+    return await spindle.rpcPool.read<T | null>(`lumi_books.${endpoint}`);
   } catch (error) {
     if (/not registered/i.test(errorText(error))) return null;
     throw error;
   }
+}
+/** Null while Cache Friendly mode is off, so the timed refresh works again and the switch itself reads as planned. */
+async function plannedBreakEpoch(user: string, chatId: string): Promise<string | null> {
+  const mode = await readLumiBooks<{ cacheFriendly?: unknown; codexEnabled?: unknown }>(`cache_mode.${user}`);
+  if (mode?.cacheFriendly !== true) return null;
+  const chat = await readLumiBooks<{ epoch?: unknown }>(`cache_epoch.${chatId}`);
+  return `${mode.codexEnabled === false ? "no-codex" : "codex"}:${typeof chat?.epoch === "string" ? chat.epoch : ""}`;
 }
 function text(value: unknown): string {
   if (typeof value !== "string" || !value || value.length > 200) throw new Error("Invalid LumiCache request.");
@@ -64,20 +71,27 @@ spindle.on("MESSAGE_DELETED", (event, user) => {
   const chat = (event as { chatId?: unknown } | null)?.chatId;
   if (user && typeof chat === "string") autoRefresh.cancel(user, chat);
 });
+// Force consistency stops at a message the chat changed, and text that did not change releases nothing.
+for (const name of ["MESSAGE_EDITED", "MESSAGE_SWIPED", "SWIPE_EDITED"] as const) spindle.on(name, (event, user) => {
+  const { chatId, message } = event as { chatId?: unknown; message?: { id?: unknown } };
+  if (user && typeof chatId === "string" && typeof message?.id === "string") guard.release(user, chatId, message.id);
+});
 spindle.on("GENERATION_STARTED", (event, user) => { if (user) { contexts.start(user, event); autoRefresh.interrupt(user, event.chatId); } });
 spindle.registerInterceptor(async (messages, context) => {
   const raw = context as HostContext;
   if (raw.isDryRun || raw.dryRun) return messages;
   const config = await settings(raw.userId);
   if (config.mode === "off") { guard.unwatched(raw.userId, raw.chatId); return messages; }
-  return guard.inspect(messages, await contexts.resolve(raw, spindle), config, await plannedBreakEpoch(raw.chatId));
+  return guard.inspect(messages, await contexts.resolve(raw, spindle), config, await plannedBreakEpoch(raw.userId, raw.chatId));
 }, {
   priority: 2_000_000_000, required: true,
   match: { generationTypes: ["normal", "continue", "regenerate", "swipe"] },
 });
 spindle.on("GENERATION_ENDED", (event, user) => { if (!user) return;
   contexts.finish(user, event);
-  if (guard.finish(user, event.generationId, !event.error, event.messageId)) void settings(user).then(config => autoRefresh.start(user, event.chatId, validateSettings(config)), error => console.warn("[LumiCache] Could not start auto-refresh:", error));
+  // The host sends usage on this event, though the published types leave it out.
+  const usage = sentUsage((event as { usage?: unknown }).usage);
+  if (guard.finish(user, event.generationId, !event.error, event.messageId, usage)) void settings(user).then(config => autoRefresh.start(user, event.chatId, validateSettings(config)), error => console.warn("[LumiCache] Could not start auto-refresh:", error));
 });
 spindle.on("GENERATION_STOPPED", (event, user) => { if (user) { contexts.finish(user, event); guard.finish(user, event.generationId, false); } });
 spindle.on("FRONTEND_SESSION_CLOSED", (event, user) => {
