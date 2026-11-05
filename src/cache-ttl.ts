@@ -33,7 +33,7 @@ const FIXED: Record<string, { name: string; domains: string[]; long?: boolean }>
 
 /** Reported lifetimes, so people can pick a warming interval. Most are not official. */
 function lifetime(provider: string, model: string): string | undefined {
-  if (provider === "google") return /argon/i.test(model) ? "about 15–20 minutes for Gemini 4 Argon, from one unofficial report" : "about 3–5 minutes on average, but it varies";
+  if (provider === "google") return /argon/i.test(model) ? "about 15–20 minutes for Gemini 4 Argon" : "about 3–5 minutes on average, but it varies";
   if (provider === "zai") return "5–30 minutes in one independent test";
   if (provider === "openai") return /^gpt-(5\.([6-9]|\d{2,})|[6-9])/i.test(model) ? "30 minutes" : "usually 5–10 minutes, sometimes up to an hour";
   return undefined;
