@@ -728,10 +728,13 @@ var STYLES = `
 .lc-updating { opacity:.65; }
 .lc-health-pending { font-size:12px; color:var(--lc-muted); padding:9px 0; }
 .lc-groups { display:flex; flex-direction:column; gap:10px; }
-.lc-pinned { display:flex; gap:9px; padding:10px 12px; border:1px solid var(--lc-issue); border-radius:9px; background:color-mix(in srgb,var(--lc-issue) 9%,transparent); }
-.lc-pinned-risk { border-color:var(--lc-risk); background:color-mix(in srgb,var(--lc-risk) 9%,transparent); }
-.lc-pinned .lc-row-copy { display:flex; flex-direction:column; gap:3px; min-width:0; }
-.lc-pinned p { margin:0; font-size:12px; overflow-wrap:anywhere; }
+.lc-pinned { border:1px solid var(--lc-issue); border-radius:9px; background:color-mix(in srgb,var(--lc-issue) 6%,transparent); }
+.lc-pinned-risk { border-color:color-mix(in srgb,var(--lc-risk) 60%,transparent); background:color-mix(in srgb,var(--lc-risk) 6%,transparent); }
+.lc-pinned-summary { display:flex; align-items:center; gap:9px; padding:8px 12px; font-size:12px; }
+.lc-pinned-summary > strong { flex:1; min-width:0; }
+.lc-pinned-summary > .lc-dot { margin-top:0; }
+.lc-pinned-body { display:flex; flex-direction:column; gap:4px; padding:0 12px 10px 26px; }
+.lc-pinned-body p { margin:0; font-size:12px; overflow-wrap:anywhere; }
 .lc-group { border:1px solid var(--lc-line); border-radius:13px; background:color-mix(in srgb,var(--lc-panel) 55%,var(--lc-bg)); overflow:hidden; }
 .lc-root summary { cursor:pointer; list-style:none; }
 .lc-root summary::-webkit-details-marker { display:none; }
@@ -1625,11 +1628,10 @@ function renderFindings(rows, open) {
     return list;
   };
   for (const row of actionable(rows).filter((row) => row.pinned)) {
-    const card = el("div", `lc-pinned lc-pinned-${row.level === "risk" ? "risk" : "issue"}`), copy = el("div", "lc-row-copy");
-    card.setAttribute("role", "alert");
-    copy.append(el("strong", "", row.title), ...row.item ? [el("small", "lc-muted", row.item)] : [], el("p", "", row.detail), el("p", "lc-fix", row.suggestion));
-    card.append(el("span", row.level === "risk" ? "lc-dot" : "lc-dot lc-dot-issue"), copy);
-    root.append(card);
+    const summary = el("summary", "lc-pinned-summary"), body = el("div", "lc-pinned-body");
+    summary.append(el("span", row.level === "risk" ? "lc-dot" : "lc-dot lc-dot-issue"), el("strong", "", row.title), icon("chevron", "lc-chevron"));
+    body.append(...row.item ? [el("small", "lc-muted", row.item)] : [], el("p", "", row.detail), el("p", "lc-fix", row.suggestion));
+    root.append(disclosures(`pinned/${row.id}`, `lc-pinned lc-pinned-${row.level === "risk" ? "risk" : "issue"}`, summary, body));
   }
   for (const category of CATEGORIES) {
     const selected = actionable(rows).filter((row) => !row.pinned && (row.category ?? (row.level === "observed" ? "Simulation" : "Context")) === category);

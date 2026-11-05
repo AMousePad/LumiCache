@@ -72,11 +72,12 @@ export function renderFindings(rows: Finding[], open: Set<string>): HTMLElement 
     };
     append(); return list;
   };
+  // Pinned rows stay small until clicked, so they don't crowd out the rest.
   for (const row of actionable(rows).filter(row => row.pinned)) {
-    const card = el("div", `lc-pinned lc-pinned-${row.level === "risk" ? "risk" : "issue"}`), copy = el("div", "lc-row-copy");
-    card.setAttribute("role", "alert");
-    copy.append(el("strong", "", row.title), ...(row.item ? [el("small", "lc-muted", row.item)] : []), el("p", "", row.detail), el("p", "lc-fix", row.suggestion));
-    card.append(el("span", row.level === "risk" ? "lc-dot" : "lc-dot lc-dot-issue"), copy); root.append(card);
+    const summary = el("summary", "lc-pinned-summary"), body = el("div", "lc-pinned-body");
+    summary.append(el("span", row.level === "risk" ? "lc-dot" : "lc-dot lc-dot-issue"), el("strong", "", row.title), icon("chevron", "lc-chevron"));
+    body.append(...(row.item ? [el("small", "lc-muted", row.item)] : []), el("p", "", row.detail), el("p", "lc-fix", row.suggestion));
+    root.append(disclosures(`pinned/${row.id}`, `lc-pinned lc-pinned-${row.level === "risk" ? "risk" : "issue"}`, summary, body));
   }
   for (const category of CATEGORIES) {
     const selected = actionable(rows).filter(row => !row.pinned && (row.category ?? (row.level === "observed" ? "Simulation" : "Context")) === category);

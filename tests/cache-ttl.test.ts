@@ -29,6 +29,12 @@ describe("routes", () => {
     expect(ttlParameters({ provider: "moonshot", model: "kimi-k3" }, settings({ cacheTtl: false }))).toBeUndefined();
     expect(ttlParameters({ provider: "deepseek", model: "deepseek-chat" }, settings())).toBeUndefined();
   });
+  test("Vertex Gemini is a known Gemini cache, and other Vertex models are unknown", () => {
+    expect(ttlRoute({ provider: "google_vertex", model: "gemini-4-argon" })).toEqual({ kind: "fixed", name: "Google Vertex", lifetime: "about 15–20 minutes for Gemini 4 Argon, from one unofficial report" });
+    expect(kind("google_vertex", "publishers/google/models/gemini-2.5-pro")).toBe("fixed");
+    expect(kind("google_vertex", "claude-opus-4")).toBe("unknown");
+    expect(kind("google_vertex", "meta/llama-4")).toBe("unknown");
+  });
   test("connection-set, fixed and unknown providers", () => {
     expect(kind("anthropic", "claude-opus")).toBe("connection");
     expect(kind("nanogpt", "anthropic/claude-sonnet")).toBe("connection");
@@ -90,12 +96,18 @@ describe("pinned findings", () => {
   const window = new Window(), saved = globalThis.document;
   beforeAll(() => { globalThis.document = window.document as unknown as Document; });
   afterAll(() => { globalThis.document = saved; window.happyDOM.abort(); });
-  test("render open above every category, and only there", () => {
+  test("render collapsed above every category, and only there", () => {
     const pinned = ttlFinding(connection("google"), "gemini-3-pro", settings())!;
     const other: Finding = { category: "Preset", id: "x", level: "issue", title: "Other", source: "Preset", item: "Block", detail: "d", suggestion: "s" };
-    const root = renderFindings([other, pinned], new Set());
-    expect(root.firstElementChild?.className).toBe("lc-pinned lc-pinned-risk");
-    expect(root.firstElementChild?.textContent).toContain("Cache may expire between replies");
+    const open = new Set<string>(), root = renderFindings([other, pinned], open);
+    const card = root.firstElementChild as HTMLDetailsElement;
+    expect(card.tagName).toBe("DETAILS");
+    expect(card.className).toBe("lc-pinned lc-pinned-risk");
+    expect(card.open).toBe(false);
+    expect(card.querySelector("summary")?.textContent).toBe("Cache may expire between replies");
+    card.open = true; card.dispatchEvent(new window.Event("toggle") as unknown as Event);
+    expect(open.has("pinned/cache-ttl")).toBe(true);
+    expect((renderFindings([other, pinned], open).firstElementChild as HTMLDetailsElement).open).toBe(true);
     expect(root.querySelectorAll(".lc-pinned")).toHaveLength(1);
     expect([...root.querySelectorAll(".lc-group-name")].map(node => node.textContent)).toEqual(["Preset"]);
   });

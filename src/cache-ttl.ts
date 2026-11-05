@@ -39,13 +39,16 @@ function lifetime(provider: string, model: string): string | undefined {
   return undefined;
 }
 export function ttlRoute(route: Route): TtlRoute {
-  const where = host(route.endpointOrigin), model = route.model.replace(/^[^/]+\//, "");
+  // Routers and Vertex prefix the model with its publisher.
+  const where = host(route.endpointOrigin), model = route.model.split("/").pop() ?? "";
   const is = (provider: string, domains: string[]) => route.provider === provider || (route.provider === "custom" && on(where, domains));
   if (is("moonshot", ["moonshot.ai", "moonshot.cn", "kimi.ai", "kimi.com"]))
     return MOONSHOT_TTL.test(model) ? { kind: "lumicache", name: "Moonshot", parameters: { prompt_cache_options: { mode: "implicit", ttl: "1h" } } } : { kind: "fixed", name: "Moonshot" };
   if (is("openai", ["api.openai.com"]))
     return OPENAI_TTL.test(model) ? { kind: "lumicache", name: "OpenAI", parameters: { prompt_cache_retention: "24h" } } : { kind: "fixed", name: "OpenAI", lifetime: lifetime("openai", model) };
   if (route.provider === "anthropic") return { kind: "connection", name: "Anthropic" };
+  // Vertex serves Gemini with the same implicit cache. Lumiverse sets no cache options for its Claude and open models.
+  if (route.provider === "google_vertex") return /^gemini/i.test(model) ? { kind: "fixed", name: "Google Vertex", lifetime: lifetime("google", model) } : { kind: "unknown" };
   if (route.provider === "nanogpt") return /claude/i.test(model) ? { kind: "connection", name: "NanoGPT" } : { kind: "fixed", name: "NanoGPT" };
   for (const [provider, known] of Object.entries(FIXED)) if (is(provider, known.domains)) return { kind: "fixed", name: known.name, long: known.long, lifetime: lifetime(provider, model) };
   return { kind: "unknown" };
@@ -66,13 +69,13 @@ export function ttlFinding(connection: Pick<ConnectionProfileDTO, "provider" | "
     ({ category: "Connection", id: "cache-ttl", level, pinned: true, title, source: "Connection", item: connection.name, detail, suggestion });
   if (ttl.kind === "connection") {
     if (settings.autoRefreshEnabled && settings.autoRefreshMinutes < 5) return null;
-    const what = "This connection asks for a 5 minute cache, so a pause of more than 5 minutes between replies means paying for the whole prompt again. LumiCache can't change it, because Lumiverse sets it from the connection.";
+    const what = "This connection has only a 5 minute cache timeout. LumiCache can't change it because Lumiverse sets it from the connection.";
     const warm = `, or turn on ${KEEP_WARM} with an interval under 5 minutes.`;
     if (connection.provider === "anthropic") {
       const caching = connection.metadata?.prompt_caching, options = record(caching);
       // Caching off has its own issue.
       if ((caching !== true && !options) || options?.ttl === "1h") return null;
-      return finding("issue", "Cache lasts 5 minutes", what, `Open this connection's settings and set Prompt cache TTL to 1h${warm}`);
+      return finding("issue", "!!! Cache lasts 5 minutes", what, `Open this connection's settings and set Prompt cache TTL to 1h${warm}`);
     }
     const options = record(connection.metadata?.nanogpt_caching);
     if (options?.enabled === true && options.ttl === "1h") return null;
@@ -82,7 +85,7 @@ export function ttlFinding(connection: Pick<ConnectionProfileDTO, "provider" | "
   // Warming is only as good as its interval, and only the user can look up their model's lifetime.
   if (ttl.kind === "fixed") {
     const every = settings.autoRefreshMinutes;
-    return finding("risk", "Cache may expire between replies", `${ttl.name} keeps the cache for a while after your last request, then throws it away, and there's no setting to make that longer.${ttl.lifetime ? ` Reported lifetime: ${ttl.lifetime}.` : ""} After a long enough pause, the whole prompt is paid for again.`,
+    return finding("risk", "Cache may expire between replies", `${ttl.name} is the time your cache is valid for before the provider discards it. Your current provider disallows changes.${ttl.lifetime ? ` Reported lifetime: ${ttl.lifetime}.` : ""}.`,
       settings.autoRefreshEnabled ? `Keep Cache Warm is on and warming every ${every} minutes. PS: Ensure your provider and model's cache lifetime is over ${every} minutes to have this work properly. You can usually find this information on Google.`
         : `If you want to prevent cache timeouts for ${ttl.name}, turn on ${KEEP_WARM}. Find your provider and model's cache lifetime on Google and set the Keep Cache Warm interval below it.`);
   }
@@ -92,6 +95,6 @@ export function ttlFinding(connection: Pick<ConnectionProfileDTO, "provider" | "
     return finding("risk", "LumiCache isn't setting your cache lifetime", `${ttl.name} can keep your cache longer if LumiCache asks, but Set long cache lifetime is off.`,
       "Turn this on in the LumiCache settings.");
   }
-  return finding("risk", "Check your cache lifetime", "LumiCache doesn't know how this provider caches. Cache lifetime is how long a provider keeps the cache after your last request before throwing it away. If it's too short, a pause between replies means paying for the whole prompt again.",
-    `Set the cache lifetime high enough in your preset's custom request body, or turn on ${KEEP_WARM} if you can't set it to a comfortable value.`);
+  return finding("risk", "Check your cache lifetime", "LumiCache doesn't know how this provider caches. Cache lifetime is how long a provider keeps the cache after your last request before deleting it. If it's too short, pauses between messages will invalidate your cache.",
+    `If needed, set the cache lifetime high enough in your preset's custom request body, or turn on ${KEEP_WARM} if this is unsupported by your provider.`);
 }
