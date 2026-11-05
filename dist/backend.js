@@ -3253,7 +3253,7 @@ function ttlFinding(connection, model, settings) {
     return null;
   if (ttl.kind === "fixed") {
     const every = settings.autoRefreshMinutes;
-    return finding("risk", "Cache may expire between replies", `${ttl.name} is the time your cache is valid for before the provider discards it. Your current provider disallows changes.${ttl.lifetime ? ` Reported lifetime: ${ttl.lifetime}.` : ""}.`, settings.autoRefreshEnabled ? `Keep Cache Warm is on and warming every ${every} minutes. PS: Ensure your provider and model's cache lifetime is over ${every} minutes to have this work properly. You can usually find this information on Google.` : `If you want to prevent cache timeouts for ${ttl.name}, turn on ${KEEP_WARM}. Find your provider and model's cache lifetime on Google and set the Keep Cache Warm interval below it.`);
+    return finding("risk", "Cache may expire between replies", `${ttl.name} controls the how long your cache is valid for. This provider disallows changes.${ttl.lifetime ? ` Reported lifetime: ${ttl.lifetime}.` : ""}.`, settings.autoRefreshEnabled ? `Keep Cache Warm is on and warming every ${every} minutes. PS: Ensure your provider and model's cache lifetime is over ${every} minutes to have this work properly. You can usually find this information on Google.` : `If you want to prevent cache timeouts for ${ttl.name}, turn on ${KEEP_WARM}. Find your provider and model's cache lifetime on Google and set the Keep Cache Warm interval below it.`);
   }
   if (settings.autoRefreshEnabled)
     return null;
