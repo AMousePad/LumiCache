@@ -10,8 +10,8 @@ const force=validateSettings({mode:"pause",forceConsistency:true,acceptableDepth
 const flush=async()=>{for(let i=0;i<10;i++)await Promise.resolve();};
 async function sent(guard:Guard,messages:LlmMessageDTO[],settings=force,success=true) { const c=context(); const result=await guard.inspect(messages,c,settings); guard.finish(c.userId,c.generationId,success);return result; }
 describe("cache consistency",()=>{
- test("legacy settings migrate to depth two, ignored token limit and opt-in mutations",()=>{
-  expect(validateSettings({mode:"pause"})).toMatchObject({acceptableDepth:2,acceptableTokens:null,forceConsistency:false,refreshEnabled:true});
+ test("legacy settings migrate to blank depth, ignored token limit and opt-in mutations",()=>{
+  expect(validateSettings({mode:"pause"})).toMatchObject({acceptableDepth:null,acceptableTokens:null,forceConsistency:false,refreshEnabled:true});
   for(const invalid of [{acceptableDepth:-1},{acceptableTokens:"100"},{refreshEvery:0},{forceConsistency:"true"},{hiddenCategories:["bogus"]}]) expect(()=>validateSettings({mode:"pause",...invalid})).toThrow();
   expect(validateSettings({mode:"warn",acceptableDepth:null,acceptableTokens:0}).acceptableTokens).toBe(0);
  });

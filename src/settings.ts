@@ -1,4 +1,25 @@
 import { DEFAULT_SETTINGS, type Settings } from "./shared";
+export interface SettingsStorage {
+  getJson<T>(path: string, options: { fallback: T; userId: string }): Promise<T>;
+  setJson(path: string, value: unknown, options: { userId: string }): Promise<void>;
+}
+const FILE = "settings.json";
+/** Every write carries this, so a depth of 5 in a marked file is one the user chose. It lives in the same file so that the cleared value and the marker land together. */
+const SETTINGS_VERSION = 1;
+export function saveSettings(storage: SettingsStorage, user: string, settings: Required<Settings>): Promise<void> {
+  return storage.setJson(FILE, { ...settings, settingsVersion: SETTINGS_VERSION }, { userId: user });
+}
+export async function loadSettings(storage: SettingsStorage, user: string): Promise<Required<Settings>> {
+  const saved = await storage.getJson<Record<string, unknown> | null>(FILE, { fallback: null, userId: user });
+  if (!saved) return validateSettings(DEFAULT_SETTINGS);
+  if (saved.settingsVersion) return validateSettings(saved);
+  // Saving used to write the old default of 5 for everyone, so a 5 from before the marker is cleared this one time.
+  const migrated = validateSettings(saved.acceptableDepth === 5 ? { ...saved, acceptableDepth: null } : saved);
+  // A failed write retries on the next load. The next save marks the file anyway.
+  try { await saveSettings(storage, user, migrated); }
+  catch (error) { console.warn("[LumiCache] Could not save migrated settings:", error); }
+  return migrated;
+}
 export function validateSettings(value: unknown): Required<Settings> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid cache settings.");
   const v = value as Record<string, unknown>;

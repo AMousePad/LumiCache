@@ -1,6 +1,6 @@
 import type { LlmMessageDTO } from "lumiverse-spindle-types";
 import { stableJson, MAX_PROMPT_CHARACTERS } from "./compare";
-import type { InspectionContext, Settings } from "./shared";
+import { DEFAULT_ACCEPTABLE_DEPTH, type InspectionContext, type Settings } from "./shared";
 export type TokenCounter = (messages: LlmMessageDTO[], context: InspectionContext) => Promise<{ total_tokens: number; approximate: boolean }>;
 export const historyMessage = (m: LlmMessageDTO) => m.__isChatHistory === true;
 const identity = (m: LlmMessageDTO) => m.sourceMessageId;
@@ -18,7 +18,8 @@ export function retain(messages: LlmMessageDTO[]): { messages: LlmMessageDTO[]; 
 export async function tailStart(messages: LlmMessageDTO[], policy: Required<Settings>, context: InspectionContext, count?: TokenCounter) {
   const indices = messages.flatMap((m, i) => historyMessage(m) ? [i] : []);
   if (!indices.length) return { index: messages.length, approximate: false };
-  let index = policy.acceptableDepth === null ? indices[0] : policy.acceptableDepth === 0 ? messages.length : indices[Math.max(0, indices.length - policy.acceptableDepth)];
+  const depth = policy.acceptableDepth ?? DEFAULT_ACCEPTABLE_DEPTH;
+  let index = depth === 0 ? messages.length : indices[Math.max(0, indices.length - depth)];
   let approximate = false;
   if (policy.acceptableTokens !== null) {
     if (!count) throw new Error("The host token counter is unavailable. Leave the token limit blank to use message depth.");

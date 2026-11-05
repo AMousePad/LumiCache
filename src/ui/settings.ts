@@ -1,4 +1,4 @@
-import type { Settings } from "../shared";
+import { DEFAULT_ACCEPTABLE_DEPTH, type Settings } from "../shared";
 import { validateSettings } from "../settings";
 import { button,el } from "./elements";
 export function policySettings(value: Settings, busy: boolean, save: (patch: Partial<Settings>) => void): HTMLElement & { setBusy(value: boolean): void } {
@@ -27,7 +27,7 @@ export function policySettings(value: Settings, busy: boolean, save: (patch: Par
     input.addEventListener("change",()=>{draft[key]=input.checked;changed();update();});copy.append(el("strong","",title),el("small","lc-muted",subtitle));label.append(copy,input);parent.append(label);
   };
   select(root,"mode","Cache-break behavior",[["pause","Pause and review"],["warn","Warn and send"],["off","Off"]]);
-  const tail=section("Mutable tail");number(tail,"acceptableDepth","Acceptable depth","No limit");number(tail,"acceptableTokens","History token limit","Not considered");tail.append(el("p","lc-muted","Depth counts history messages from the most recent. Blank limits are ignored and all set limits co-apply."));
+  const tail=section("Mutable tail");number(tail,"acceptableDepth","Acceptable depth",String(DEFAULT_ACCEPTABLE_DEPTH));number(tail,"acceptableTokens","History token limit","Not considered");tail.append(el("p","lc-muted",`Depth counts history messages from the most recent. Blank depth uses the default of ${DEFAULT_ACCEPTABLE_DEPTH}. A blank token limit is ignored, and a set limit co-applies with depth.`));
   const force=section("Consistency");let destination:HTMLElement,refresh:HTMLElement;
   toggle(force,"forceConsistency","Force cache consistency","Restore prior prompt content before sending.",()=>{destination.hidden=refresh.hidden=!draft.forceConsistency;});
   destination=select(force,"overflowPlacement","Move out-of-range injections",[["end","After the last message"],["boundary","At the allowed boundary"]]);destination.hidden=!draft.forceConsistency;

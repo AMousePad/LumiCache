@@ -24,7 +24,9 @@ export interface InspectionContext {
   scope?: string;
   label?: string;
 }
-export const DEFAULT_SETTINGS: Required<Settings> = { mode: "warn", acceptableDepth: 2, acceptableTokens: null,
+/** Applies while acceptableDepth is empty. Keeping it out of saved settings lets a later default reach users who never chose a depth. */
+export const DEFAULT_ACCEPTABLE_DEPTH = 2;
+export const DEFAULT_SETTINGS: Required<Settings> = { mode: "warn", acceptableDepth: null, acceptableTokens: null,
   forceConsistency: false, overflowPlacement: "end", refreshEnabled: true, refreshEvery: 20, autoRefreshEnabled: false, autoRefreshMinutes: 10, autoRefreshLimit: 3, hiddenCategories: [] };
 export interface PromptMessage { role: string; header: string; body: string }
 export interface Snapshot {

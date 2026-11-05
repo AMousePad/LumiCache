@@ -13,10 +13,10 @@ const rows:Finding[]=[{id:"safe",category:"Depth Mutable",group:"Preset · Main"
  {id:"bad",category:"Depth Mutable",group:"World info · Lore",item:"Deep note",level:"depth",depth:6,title:"Depth 6",source:"World info",detail:"",suggestion:"",problematic:true},
  {id:"risk",category:"Regex",level:"risk",title:"Runtime operation",source:"Regex",detail:"",suggestion:""},
  {id:"issue",category:"World info",level:"issue",title:"Keyword activation",source:"World info",detail:"",suggestion:""}];
-test("settings display depth two and blank token cap, and preserve explicit zero",()=>{
+test("settings display blank depth with its default as a placeholder, blank token cap, and preserve explicit zero",()=>{
  const patches:Partial<Settings>[]=[]; const root=policySettings({mode:"pause"},false,p=>patches.push(p));
  const depth=root.querySelector<HTMLInputElement>('[aria-label="Acceptable depth"]')!, tokens=root.querySelector<HTMLInputElement>('[aria-label="History token limit"]')!;
- expect(depth.value).toBe("2");expect(tokens.value).toBe("");expect(root.querySelector<HTMLInputElement>('[role="switch"]')!.checked).toBe(false);
+ expect(depth.value).toBe("");expect(depth.placeholder).toBe("2");expect(tokens.value).toBe("");expect(root.querySelector<HTMLInputElement>('[role="switch"]')!.checked).toBe(false);
  tokens.value="0";tokens.dispatchEvent(new window.Event("change") as unknown as Event);(root.querySelector("button") as HTMLButtonElement).click();expect(patches.at(-1)).toMatchObject({acceptableTokens:0});
  tokens.value="";tokens.dispatchEvent(new window.Event("change") as unknown as Event);depth.value="4";depth.dispatchEvent(new window.Event("change") as unknown as Event);(root.querySelector("button") as HTMLButtonElement).click();expect(patches.at(-1)).toMatchObject({acceptableTokens:null});
  root.setBusy(true);expect(depth.disabled).toBe(true);root.setBusy(false);expect(depth.value).toBe("4");expect(depth.disabled).toBe(false);
@@ -57,4 +57,15 @@ test("Variabled gets its own filter, section and blue marks, and is not counted 
   expect(root.querySelector(".lc-variabled-group .lc-group-name")!.textContent).toBe("Variabled");
   expect(root.querySelector(".lc-count-variabled")).not.toBeNull(); expect(root.querySelector(".lc-dot-variabled")).not.toBeNull();
   expect(validateSettings({ mode: "warn", hiddenCategories: ["variabled"] }).hiddenCategories).toEqual(["variabled"]);
+});
+test("blank depth saves nothing until entered, and deleting it saves blank",()=>{
+ const change=(input:HTMLInputElement,value:string)=>{input.value=value;input.dispatchEvent(new window.Event("change") as unknown as Event);};
+ const patches:Partial<Settings>[]=[]; const blank=policySettings({mode:"warn"},false,p=>patches.push(p));
+ const save=blank.querySelector<HTMLButtonElement>('[data-setting="save"]')!, depth=blank.querySelector<HTMLInputElement>('[aria-label="Acceptable depth"]')!;
+ expect(save.disabled).toBe(true);
+ change(depth,"4");expect(save.disabled).toBe(false);save.click();expect(patches.at(-1)).toMatchObject({acceptableDepth:4});
+ change(depth,"");expect(save.disabled).toBe(true);
+ const set=policySettings({mode:"warn",acceptableDepth:4},false,p=>patches.push(p));
+ const clear=set.querySelector<HTMLInputElement>('[aria-label="Acceptable depth"]')!;expect(clear.value).toBe("4");
+ change(clear,"");set.querySelector<HTMLButtonElement>('[data-setting="save"]')!.click();expect(patches.at(-1)!.acceptableDepth).toBeNull();
 });

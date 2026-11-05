@@ -1,6 +1,6 @@
 import type { LlmMessageDTO, SpindleAPI } from "lumiverse-spindle-types";
 import { validateSettings } from "../settings";
-import type { Settings } from "../shared";
+import { DEFAULT_ACCEPTABLE_DEPTH, type Settings } from "../shared";
 import type { HealthReport } from "./types";
 export async function classifyDepth(report: HealthReport, settings: Settings, messages: LlmMessageDTO[], api?: Pick<SpindleAPI,"tokens">, userId?: string) {
   const policy = validateSettings(settings);
@@ -9,7 +9,7 @@ export async function classifyDepth(report: HealthReport, settings: Settings, me
   for (const finding of report.findings) {
     if (finding.level !== "depth") continue;
     const depth = finding.depth ?? 0;
-    finding.problematic = policy.acceptableDepth !== null && depth > policy.acceptableDepth;
+    finding.problematic = depth > (policy.acceptableDepth ?? DEFAULT_ACCEPTABLE_DEPTH);
     if (policy.acceptableTokens !== null) {
       if (!counts.has(depth) && (history.length || depth === 0) && api) {
         const value = depth === 0 ? { total_tokens: 0, approximate: false } : await api.tokens.countMessages(history.slice(-depth), { model: report.model, userId });

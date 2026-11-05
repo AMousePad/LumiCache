@@ -2,7 +2,7 @@ import type { SpindleAPI } from "lumiverse-spindle-types";
 import { BaselineStore } from "./baseline";
 import { Guard } from "./guard";
 import { HostContexts, type HostContext } from "./host-context";
-import { DEFAULT_SETTINGS, errorText, type Settings } from "./shared";
+import { errorText, type Settings } from "./shared";
 import { HealthService } from "./health/service";
 import { compositionSnapshot } from "./health/composition";
 
@@ -10,7 +10,7 @@ import { AgentBridge } from "./agent-bridge";
 import { AutoRefresh } from "./auto-refresh";
 import { CatBridge } from "./cat-bridge";
 import { PromptStore } from "./prompt-store";
-import { validateSettings } from "./settings";
+import { loadSettings, saveSettings, validateSettings } from "./settings";
 const prompts = new PromptStore();
 declare const spindle: SpindleAPI;
 const guard = new Guard((user, chatId, session) => spindle.sendToFrontend({ type: "changed", chatId }, user,
@@ -32,7 +32,7 @@ agent.register();
 function settings(user: string): Promise<Settings> {
   let current = settingsCache.get(user);
   if (!current) {
-    current = spindle.userStorage.getJson<Settings>("settings.json", { fallback: DEFAULT_SETTINGS, userId: user }).then(validateSettings);
+    current = loadSettings(spindle.userStorage, user);
     settingsCache.set(user, current);
     void current.catch(() => { if (settingsCache.get(user) === current) settingsCache.delete(user); });
   }
@@ -107,7 +107,7 @@ spindle.onFrontendMessage((raw, user, session) => {
         }
         case "settings": {
           const before = validateSettings(await settings(user)), next = validateSettings(input);
-          await spindle.userStorage.setJson("settings.json", next, { userId: user });
+          await saveSettings(spindle.userStorage, user, next);
           settingsCache.set(user, Promise.resolve(next)); value = next;
           // Health filters save through here too, and must not reset a running job.
           if (before.autoRefreshEnabled !== next.autoRefreshEnabled || before.autoRefreshMinutes !== next.autoRefreshMinutes || before.autoRefreshLimit !== next.autoRefreshLimit) autoRefresh.restart(user, next);
@@ -117,7 +117,7 @@ spindle.onFrontendMessage((raw, user, session) => {
           if (typeof input.enabled !== "boolean") throw new Error("Invalid Keep Cache Warm request.");
           const chatId = input.chatId === undefined ? undefined : text(input.chatId);
           const next = { ...validateSettings(await settings(user)), autoRefreshEnabled: input.enabled };
-          await spindle.userStorage.setJson("settings.json", next, { userId: user });
+          await saveSettings(spindle.userStorage, user, next);
           settingsCache.set(user, Promise.resolve(next));
           if (!next.autoRefreshEnabled) autoRefresh.cancel(user);
           else if (chatId && guard.prompt(user, chatId)) autoRefresh.start(user, chatId, next);

@@ -1301,9 +1301,10 @@ function compare(before, after) {
 }
 
 // src/shared.ts
+var DEFAULT_ACCEPTABLE_DEPTH = 2;
 var DEFAULT_SETTINGS = {
   mode: "warn",
-  acceptableDepth: 2,
+  acceptableDepth: null,
   acceptableTokens: null,
   forceConsistency: false,
   overflowPlacement: "end",
@@ -1320,6 +1321,25 @@ function errorText(error) {
 }
 
 // src/settings.ts
+var FILE = "settings.json";
+var SETTINGS_VERSION = 1;
+function saveSettings(storage, user, settings) {
+  return storage.setJson(FILE, { ...settings, settingsVersion: SETTINGS_VERSION }, { userId: user });
+}
+async function loadSettings(storage, user) {
+  const saved = await storage.getJson(FILE, { fallback: null, userId: user });
+  if (!saved)
+    return validateSettings(DEFAULT_SETTINGS);
+  if (saved.settingsVersion)
+    return validateSettings(saved);
+  const migrated = validateSettings(saved.acceptableDepth === 5 ? { ...saved, acceptableDepth: null } : saved);
+  try {
+    await saveSettings(storage, user, migrated);
+  } catch (error) {
+    console.warn("[LumiCache] Could not save migrated settings:", error);
+  }
+  return migrated;
+}
 function validateSettings(value) {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("Invalid cache settings.");
@@ -1377,7 +1397,8 @@ async function tailStart(messages, policy, context, count) {
   const indices = messages.flatMap((m, i) => historyMessage(m) ? [i] : []);
   if (!indices.length)
     return { index: messages.length, approximate: false };
-  let index = policy.acceptableDepth === null ? indices[0] : policy.acceptableDepth === 0 ? messages.length : indices[Math.max(0, indices.length - policy.acceptableDepth)];
+  const depth = policy.acceptableDepth ?? DEFAULT_ACCEPTABLE_DEPTH;
+  let index = depth === 0 ? messages.length : indices[Math.max(0, indices.length - depth)];
   let approximate = false;
   if (policy.acceptableTokens !== null) {
     if (!count)
@@ -1827,7 +1848,7 @@ async function classifyDepth(report, settings, messages, api, userId) {
     if (finding.level !== "depth")
       continue;
     const depth = finding.depth ?? 0;
-    finding.problematic = policy.acceptableDepth !== null && depth > policy.acceptableDepth;
+    finding.problematic = depth > (policy.acceptableDepth ?? DEFAULT_ACCEPTABLE_DEPTH);
     if (policy.acceptableTokens !== null) {
       if (!counts.has(depth) && (history.length || depth === 0) && api) {
         const value = depth === 0 ? { total_tokens: 0, approximate: false } : await api.tokens.countMessages(history.slice(-depth), { model: report.model, userId });
@@ -3656,8 +3677,8 @@ Reset comparison (gear) clears the chat's native and CAT baselines; the next suc
   {
     id: "policy",
     label: "Settings, mutable tail and forced consistency",
-    text: `Settings are per user; edit the gear panel then Save settings. Defaults: mode=warn, acceptableDepth=2, acceptableTokens=null, forceConsistency=false, overflowPlacement=end, refreshEnabled=true, refreshEvery=20, autoRefreshEnabled=false, autoRefreshMinutes=10, autoRefreshLimit=3.
-Mutable tail: acceptableDepth counts history messages from the most recent (0 allows none; blank ignores depth). History token limit bounds that tail using Lumiverse's possibly approximate tokenizer (blank ignores tokens). Both set limits apply; both blank allow the history tail, not the leading instruction prefix. Ordinary tail tolerance requires existing history content/identity to remain unchanged. Connection/model/dispatch changes still count as breaks.
+    text: `Settings are per user; edit the gear panel then Save settings. Defaults: mode=warn, acceptableDepth=blank (uses 2), acceptableTokens=null, forceConsistency=false, overflowPlacement=end, refreshEnabled=true, refreshEvery=20, autoRefreshEnabled=false, autoRefreshMinutes=10, autoRefreshLimit=3.
+Mutable tail: acceptableDepth counts history messages from the most recent (0 allows none; blank uses the default of 2). History token limit bounds that tail using Lumiverse's possibly approximate tokenizer (blank ignores tokens). Both set limits apply. The tail never includes the leading instruction prefix. Ordinary tail tolerance requires existing history content/identity to remain unchanged. Connection/model/dispatch changes still count as breaks.
 Force cache consistency restores the previous outgoing protected prefix, instructions/lore and prior history content; newly appended history remains. Fresh out-of-range injections move after the last message (end) or to the allowed boundary (boundary). Visible chat edits remain intact but may not reach the model until refresh/reset; frozen guidance may remain in old history. Requires preserved history source IDs and indexes; another extension stripping them can make it fail. Context limits still apply.
 Allow scheduled cache breaks accepts current content after refreshEvery successful replies, then establishes a new baseline on success. It only runs with forced consistency, since a prompt that is not frozen has nothing to release. A published LumiBooks epoch replaces the timer; route changes still require normal review. Reset comparison applies current content on the next successful send.
 Keep Cache Warm (autoRefreshEnabled) resends the last successful prompt of the chat the user sent in last, with minimal output, every autoRefreshMinutes up to autoRefreshLimit times per reply. Each one is billed. Turn it on or off from the input bar drawer or settings; while it runs, a banner above the input shows a spinner and a Stop button that turns it off. A new reply restarts the count; deleting a message stops the current run, and it stops itself after a cache miss, an error or a model change. It needs monitoring on and cannot repeat native tools.
@@ -4336,7 +4357,7 @@ agent.register();
 function settings(user) {
   let current = settingsCache.get(user);
   if (!current) {
-    current = spindle.userStorage.getJson("settings.json", { fallback: DEFAULT_SETTINGS, userId: user }).then(validateSettings);
+    current = loadSettings(spindle.userStorage, user);
     settingsCache.set(user, current);
     current.catch(() => {
       if (settingsCache.get(user) === current)
@@ -4455,7 +4476,7 @@ spindle.onFrontendMessage((raw, user, session) => {
         }
         case "settings": {
           const before = validateSettings(await settings(user)), next = validateSettings(input);
-          await spindle.userStorage.setJson("settings.json", next, { userId: user });
+          await saveSettings(spindle.userStorage, user, next);
           settingsCache.set(user, Promise.resolve(next));
           value = next;
           if (before.autoRefreshEnabled !== next.autoRefreshEnabled || before.autoRefreshMinutes !== next.autoRefreshMinutes || before.autoRefreshLimit !== next.autoRefreshLimit)
@@ -4468,7 +4489,7 @@ spindle.onFrontendMessage((raw, user, session) => {
             throw new Error("Invalid Keep Cache Warm request.");
           const chatId = input.chatId === undefined ? undefined : text(input.chatId);
           const next = { ...validateSettings(await settings(user)), autoRefreshEnabled: input.enabled };
-          await spindle.userStorage.setJson("settings.json", next, { userId: user });
+          await saveSettings(spindle.userStorage, user, next);
           settingsCache.set(user, Promise.resolve(next));
           if (!next.autoRefreshEnabled)
             autoRefresh.cancel(user);

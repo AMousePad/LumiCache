@@ -1,7 +1,8 @@
 // src/shared.ts
+var DEFAULT_ACCEPTABLE_DEPTH = 2;
 var DEFAULT_SETTINGS = {
   mode: "warn",
-  acceptableDepth: 2,
+  acceptableDepth: null,
   acceptableTokens: null,
   forceConsistency: false,
   overflowPlacement: "end",
@@ -163,9 +164,9 @@ function policySettings(value, busy, save) {
   };
   select(root, "mode", "Cache-break behavior", [["pause", "Pause and review"], ["warn", "Warn and send"], ["off", "Off"]]);
   const tail = section("Mutable tail");
-  number(tail, "acceptableDepth", "Acceptable depth", "No limit");
+  number(tail, "acceptableDepth", "Acceptable depth", String(DEFAULT_ACCEPTABLE_DEPTH));
   number(tail, "acceptableTokens", "History token limit", "Not considered");
-  tail.append(el("p", "lc-muted", "Depth counts history messages from the most recent. Blank limits are ignored and all set limits co-apply."));
+  tail.append(el("p", "lc-muted", `Depth counts history messages from the most recent. Blank depth uses the default of ${DEFAULT_ACCEPTABLE_DEPTH}. A blank token limit is ignored, and a set limit co-applies with depth.`));
   const force = section("Consistency");
   let destination, refresh;
   toggle(force, "forceConsistency", "Force cache consistency", "Restore prior prompt content before sending.", () => {
