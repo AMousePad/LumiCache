@@ -3,7 +3,7 @@ import { BaselineStore } from "./baseline";
 import { sentUsage } from "./health/analyze";
 import { Guard } from "./guard";
 import { HostContexts, type HostContext } from "./host-context";
-import { errorText, type Settings } from "./shared";
+import { cacheModeEndpoint, errorText, type Settings } from "./shared";
 import { HealthService } from "./health/service";
 import { compositionSnapshot } from "./health/composition";
 
@@ -43,7 +43,7 @@ function settings(user: string): Promise<Settings> {
 spindle.rpcPool.sync("status", { version: 1 }, { requires: [] });
 async function readLumiBooks<T>(endpoint: string): Promise<T | null> {
   try {
-    return await spindle.rpcPool.read<T | null>(`lumi_books.${endpoint}`);
+    return await spindle.rpcPool.read<T | null>(endpoint);
   } catch (error) {
     if (/not registered/i.test(errorText(error))) return null;
     throw error;
@@ -51,9 +51,9 @@ async function readLumiBooks<T>(endpoint: string): Promise<T | null> {
 }
 /** Null while Cache Friendly mode is off, so the timed refresh works again and the switch itself reads as planned. */
 async function plannedBreakEpoch(user: string, chatId: string): Promise<string | null> {
-  const mode = await readLumiBooks<{ cacheFriendly?: unknown; codexEnabled?: unknown }>(`cache_mode.${user}`);
+  const mode = await readLumiBooks<{ cacheFriendly?: unknown; codexEnabled?: unknown }>(cacheModeEndpoint(user));
   if (mode?.cacheFriendly !== true) return null;
-  const chat = await readLumiBooks<{ epoch?: unknown }>(`cache_epoch.${chatId}`);
+  const chat = await readLumiBooks<{ epoch?: unknown }>(`lumi_books.cache_epoch.${chatId}`);
   return `${mode.codexEnabled === false ? "no-codex" : "codex"}:${typeof chat?.epoch === "string" ? chat.epoch : ""}`;
 }
 function text(value: unknown): string {

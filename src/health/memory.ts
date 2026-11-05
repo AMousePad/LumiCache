@@ -1,4 +1,5 @@
 import type { SpindleAPI } from "lumiverse-spindle-types";
+import { cacheModeEndpoint } from "../shared";
 import type { Finding } from "./types";
 
 export const LUMIBOOKS_URL = "https://github.com/AMousePad/LumiBooks";
@@ -19,7 +20,7 @@ export async function memoryFinding(api: Pick<SpindleAPI, "rpcPool">, user: stri
     try { return { state: "value", value: await api.rpcPool.read(endpoint) }; }
     catch (error) { return { state: /not registered/i.test(String((error as Error)?.message ?? error)) ? "missing" : "unknown" }; }
   };
-  const mode = `lumi_books.cache_mode.${user}`;
+  const mode = cacheModeEndpoint(user);
   let result = await read(mode);
   if (result.state === "missing") {
     // A disabled or absent extension has no endpoints. LumiCache cannot tell those two apart.

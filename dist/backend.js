@@ -2591,6 +2591,7 @@ var COVERAGE = "Compares assembled prompts before sending. Later host/provider c
 function errorText(error) {
   return error instanceof Error ? error.message : String(error);
 }
+var cacheModeEndpoint = (user) => `lumi_books.cache_mode.${Array.from(new TextEncoder().encode(user), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 
 // src/settings.ts
 var FILE = "settings.json";
@@ -3372,7 +3373,7 @@ async function memoryFinding(api, user, settleMs = 1500) {
       return { state: /not registered/i.test(String(error?.message ?? error)) ? "missing" : "unknown" };
     }
   };
-  const mode = `lumi_books.cache_mode.${user}`;
+  const mode = cacheModeEndpoint(user);
   let result = await read(mode);
   if (result.state === "missing") {
     if ((await read("lumi_books.phoneline")).state === "missing")
@@ -4442,7 +4443,7 @@ function settings(user) {
 spindle.rpcPool.sync("status", { version: 1 }, { requires: [] });
 async function readLumiBooks(endpoint) {
   try {
-    return await spindle.rpcPool.read(`lumi_books.${endpoint}`);
+    return await spindle.rpcPool.read(endpoint);
   } catch (error) {
     if (/not registered/i.test(errorText(error)))
       return null;
@@ -4450,10 +4451,10 @@ async function readLumiBooks(endpoint) {
   }
 }
 async function plannedBreakEpoch(user, chatId) {
-  const mode = await readLumiBooks(`cache_mode.${user}`);
+  const mode = await readLumiBooks(cacheModeEndpoint(user));
   if (mode?.cacheFriendly !== true)
     return null;
-  const chat = await readLumiBooks(`cache_epoch.${chatId}`);
+  const chat = await readLumiBooks(`lumi_books.cache_epoch.${chatId}`);
   return `${mode.codexEnabled === false ? "no-codex" : "codex"}:${typeof chat?.epoch === "string" ? chat.epoch : ""}`;
 }
 function text(value) {

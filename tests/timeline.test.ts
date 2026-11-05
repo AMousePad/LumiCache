@@ -11,7 +11,7 @@ import type { Bridge } from "../src/ui/bridge";
 import { renderFindings } from "../src/ui/findings";
 import { renderDiff, renderTurnDiff } from "../src/ui/diff";
 import { renderTimeline } from "../src/ui/timeline";
-import type { Check } from "../src/shared";
+import { cacheModeEndpoint, type Check } from "../src/shared";
 import { context } from "./fixtures";
 
 const window = new Window(), saved = globalThis.document;
@@ -128,7 +128,8 @@ const pool = (values: Record<string, unknown>, error = "not registered") => ({ r
   throw new Error(`Shared RPC endpoint "${endpoint}" is ${error}`);
 } } }) as unknown as Pick<SpindleAPI, "rpcPool">;
 test("Health recommends LumiBooks unless Cache Friendly mode is confirmed on", async () => {
-  const mode = "lumi_books.cache_mode.user", running = { "lumi_books.phoneline": new Error("Unauthorized Codex caller") };
+  expect(cacheModeEndpoint("92tiaFOy")).toBe("lumi_books.cache_mode.3932746961464f79");
+  const mode = cacheModeEndpoint("user"), running = { "lumi_books.phoneline": new Error("Unauthorized Codex caller") };
   const id = async (values: Record<string, unknown>) => (await memoryFinding(pool(values), "user", 0))[0]?.id;
   expect(await id({})).toBe("lumibooks-missing");
   expect(await id({ [mode]: { cacheFriendly: false } })).toBe("lumibooks-cache-friendly-off");

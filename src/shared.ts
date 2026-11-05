@@ -83,3 +83,5 @@ export interface Operations {
 export interface Reply { type: "reply"; id: string; value?: unknown; error?: string }
 export const COVERAGE = "Compares assembled prompts before sending. Later host/provider changes, tools, cache expiry and provider cache state are not visible here. This is a cache-risk check, not a confirmed cache hit or miss.";
 export function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+/** Endpoint names only allow lowercase, and user IDs can have capitals. LumiBooks encodes the same way. */
+export const cacheModeEndpoint = (user: string): string => `lumi_books.cache_mode.${Array.from(new TextEncoder().encode(user), byte => byte.toString(16).padStart(2, "0")).join("")}`;
