@@ -43,7 +43,7 @@ test("each message is named after what produced it, with world info found inside
   expect(outline[2]).toMatchObject({ label: "User", chatIndex: 0 });
   expect(outline[3].injected).toBe(true);
 });
-test("a break marks its cause and everything after it as written again, naming the part that changed", () => {
+test("a break marks its cause and everything after it as recached, naming the part that changed", () => {
   const result = timeline(prompt(), entries(), prompt("A wyrm guards the bridge."), entries("A wyrm guards the bridge."));
   expect(result.rows.map(row => row.status)).toEqual(["kept", "changed", "rewritten", "rewritten", "rewritten"]);
   expect(result.rows[1].root).toBe(true); expect(result.problems).toBe(1);

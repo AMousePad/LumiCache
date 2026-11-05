@@ -842,6 +842,8 @@ details[open] > summary > .lc-chevron { transform:rotate(90deg); }
 .lc-meter { display:flex; height:6px; gap:1px; border-radius:3px; overflow:hidden; margin:7px 0 4px; background:var(--lc-soft); }
 .lc-meter > i { flex:0 0 0; min-width:0; }
 .lc-meter-kept { background:var(--lc-ok); } .lc-meter-lost { background:var(--lc-bad); } .lc-meter-new { background:var(--lc-accent); }
+.lc-meter-risk .lc-meter-kept { background:repeating-linear-gradient(135deg,var(--lc-bad) 0 3px,var(--lc-ok) 3px 8px); }
+.lc-meter-copy-risk { color:var(--lc-bad); }
 .lc-tl { display:flex; flex-direction:column; flex:1 1 auto; min-height:400px; gap:7px; }
 .lc-tl-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
 .lc-tl-legend { display:flex; flex-wrap:wrap; gap:3px 9px; min-width:0; }
@@ -919,7 +921,7 @@ details[open] > summary > .lc-chevron { transform:rotate(90deg); }
 
 // src/ui/timeline.ts
 var KIND_LABELS = { system: "System prompt", character: "Character", persona: "Persona", world: "World info", story: "Story", injection: "Injection", memory: "Memory", extension: "Extension", other: "Other" };
-var STATUS_LABELS = { base: "", kept: "", new: "New", rewritten: "Re-written", changed: "Changed", added: "Added", removed: "Removed" };
+var STATUS_LABELS = { base: "", kept: "", new: "New", rewritten: "Recached", changed: "Changed", added: "Added", removed: "Removed" };
 var isProblem = (row) => row.status === "changed" || row.status === "added" || row.status === "removed";
 var tokens = (characters) => {
   const value = Math.round(characters / 4);
@@ -927,7 +929,7 @@ var tokens = (characters) => {
 };
 var turnName = (row) => row.kind === "story" && row.chatIndex !== undefined ? `Turn ${row.chatIndex + 1} · ${row.label}` : row.label;
 var rowHeight = (characters) => Math.round(46 + Math.min(34, Math.max(0, Math.log10(Math.max(1, characters)) - 2) * 12));
-var breakText = (tolerated) => tolerated ? "Change starts here, inside your allowed tail." : "Cache breaks here. Everything below gets written again.";
+var breakText = (tolerated) => tolerated ? "Change starts here, inside your allowed tail." : "Cache breaks here. Because this is outside your tail, your entire context is at risk of cache invalidation.";
 function renderTimeline(data, open) {
   const root = el("div", `lc-tl${data.tolerated ? " lc-tl-tolerated" : ""}`), head = el("div", "lc-tl-head"), legend = el("div", "lc-tl-legend");
   const body = el("div", "lc-tl-body"), rail = el("div", "lc-rail"), list = el("div", "lc-tl-list"), thumb = el("div", "lc-rail-thumb");
@@ -1679,7 +1681,7 @@ function simulationTests(result) {
 function testSentence(step) {
   const data = step.timeline, first = data.rows.find((row) => row.root);
   if (data.routeChanged)
-    return "The connection or model changed, so the whole prompt gets written again.";
+    return "The connection or model changed, so the whole prompt is recached.";
   if (first) {
     const place = `message ${(first.newIndex ?? first.oldIndex ?? 0) + 1}, ${turnName(first)}`;
     return data.tolerated ? `Changes start at ${place}. That is inside your allowed tail.` : `Cache breaks at ${place}.`;
@@ -1687,6 +1689,20 @@ function testSentence(step) {
   if (step.comparison.kind === "first")
     return "This is the starting prompt the tests compare against.";
   return step.comparison.kind === "append" ? "Only new text was added at the end. Everything before it stays cached." : "Nothing changed. The whole prompt stays cached.";
+}
+function cacheMeter(step, settings) {
+  const data = step.timeline, atRisk = testState(step) === "broken" && !data.routeChanged && data.kept > 0 && data.rewritten > 0;
+  const total = Math.max(1, data.kept + data.rewritten + data.added), meter = el("div", `lc-meter${atRisk ? " lc-meter-risk" : ""}`);
+  meter.setAttribute("aria-hidden", "true");
+  for (const [name, value] of [["kept", data.kept], ["lost", data.rewritten], ["new", data.added]]) {
+    const part = el("i", `lc-meter-${name}`);
+    part.style.flexGrow = String(value);
+    meter.append(part);
+  }
+  const share = (value) => `${Math.round(value / total * 100)}%`;
+  const tail = `depth ${settings.acceptableDepth ?? DEFAULT_ACCEPTABLE_DEPTH}${settings.acceptableTokens != null ? ` and ${settings.acceptableTokens.toLocaleString()} tokens` : ""}`;
+  const parts = atRisk ? [`${share(data.kept)} is consistent but at risk of invalidation due to the remaining ${share(data.rewritten)} breaking cache outside of your allowed tail of ${tail}`] : [`${share(data.kept)} cache consistent`, data.rewritten ? `${share(data.rewritten)} recached` : ""];
+  return [meter, el("p", `lc-muted lc-meter-copy${atRisk ? " lc-meter-copy-risk" : ""}`, [...parts, data.added ? `${share(data.added)} new` : ""].filter(Boolean).join(" · "))];
 }
 var turnModal;
 function closeTurnModal() {
@@ -1727,7 +1743,7 @@ function openTurnModal(ctx, client, { row, before, after, tolerated, notes = [] 
   modal.root.replaceChildren(body);
 }
 function turnSentence(row, tolerated) {
-  const place = row.root ? tolerated ? "Changes start here, inside your allowed tail. " : "The cache breaks here. Everything after this message gets written again. " : "";
+  const place = row.root ? tolerated ? "Changes start here, inside your allowed tail. " : "Cache breaks here. Because this is outside your tail, your entire context is at risk of cache invalidation. " : "";
   switch (row.status) {
     case "changed":
       return `${place}This message's text changed from the previous prompt.`;
@@ -1736,7 +1752,7 @@ function turnSentence(row, tolerated) {
     case "removed":
       return `${place}This message was in the previous prompt and is now gone.`;
     case "rewritten":
-      return "This message did not change, but it sits after the break, so it gets written again.";
+      return "This message did not change, but it sits after the break, so it is recached.";
     case "new":
       return "New text at the end of the prompt. This is normal growth and does not break the cache.";
     case "kept":
@@ -2044,15 +2060,7 @@ Copy: ${result.scratchChatId}` : ""}`));
       card.append(el("p", "lc-test-purpose", step.purpose));
       if (data) {
         card.append(el("p", "lc-test-result", testSentence(step)));
-        const total = Math.max(1, data.kept + data.rewritten + data.added), meter = el("div", "lc-meter");
-        meter.setAttribute("aria-hidden", "true");
-        for (const [name, value] of [["kept", data.kept], ["lost", data.rewritten], ["new", data.added]]) {
-          const part = el("i", `lc-meter-${name}`);
-          part.style.flexGrow = String(value);
-          meter.append(part);
-        }
-        const share = (value) => `${Math.round(value / total * 100)}%`;
-        card.append(meter, el("p", "lc-muted lc-meter-copy", [`${share(data.kept)} stays cached`, data.rewritten ? `${share(data.rewritten)} written again` : "", data.added ? `${share(data.added)} new` : ""].filter(Boolean).join(" · ")));
+        card.append(...cacheMeter(step, this.settings));
       }
       if (this.lane === "history")
         card.append(el("p", "lc-muted", "Rebuilt with your current settings, so this is not an exact replay."));

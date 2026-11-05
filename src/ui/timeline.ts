@@ -2,12 +2,12 @@ import type { StepTimeline, TimelineRow, TurnKind, TurnStatus } from "../health/
 import { button, el } from "./elements";
 
 export const KIND_LABELS: Record<TurnKind, string> = { system: "System prompt", character: "Character", persona: "Persona", world: "World info", story: "Story", injection: "Injection", memory: "Memory", extension: "Extension", other: "Other" };
-export const STATUS_LABELS: Record<TurnStatus, string> = { base: "", kept: "", new: "New", rewritten: "Re-written", changed: "Changed", added: "Added", removed: "Removed" };
+export const STATUS_LABELS: Record<TurnStatus, string> = { base: "", kept: "", new: "New", rewritten: "Recached", changed: "Changed", added: "Added", removed: "Removed" };
 export const isProblem = (row: TimelineRow) => row.status === "changed" || row.status === "added" || row.status === "removed";
 export const tokens = (characters: number) => { const value = Math.round(characters / 4); return `~${value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k` : value} tok`; };
 export const turnName = (row: TimelineRow) => row.kind === "story" && row.chatIndex !== undefined ? `Turn ${row.chatIndex + 1} · ${row.label}` : row.label;
 const rowHeight = (characters: number) => Math.round(46 + Math.min(34, Math.max(0, Math.log10(Math.max(1, characters)) - 2) * 12));
-const breakText = (tolerated: boolean) => tolerated ? "Change starts here, inside your allowed tail." : "Cache breaks here. Everything below gets written again.";
+const breakText = (tolerated: boolean) => tolerated ? "Change starts here, inside your allowed tail." : "Cache breaks here. Because this is outside your tail, your entire context is at risk of cache invalidation.";
 
 export interface TimelineView { root: HTMLElement; attached(): void; dispose(): void }
 /** The rail is the list's scrollbar, so a colored band always lines up with the turns it stands for. */

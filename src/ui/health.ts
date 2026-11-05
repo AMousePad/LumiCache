@@ -1,6 +1,6 @@
 import type { SpindleFrontendContext, SpindleModalHandle } from "lumiverse-spindle-types";
 import type { AuditInput, Finding, HealthReport, SimulationReport, SimulationStep, SimulationTicket, TimelineRow } from "../health/types";
-import { DEFAULT_SETTINGS, errorText, type Classification, type Settings, type Snapshot } from "../shared";
+import { DEFAULT_ACCEPTABLE_DEPTH, DEFAULT_SETTINGS, errorText, type Classification, type Settings, type Snapshot } from "../shared";
 import { validateSettings } from "../settings";
 import type { Bridge } from "./bridge";
 import { button, el, externalLink } from "./elements";
@@ -30,13 +30,25 @@ function simulationTests(result: SimulationReport) {
 }
 function testSentence(step: SimulationStep) {
   const data = step.timeline!, first = data.rows.find(row => row.root);
-  if (data.routeChanged) return "The connection or model changed, so the whole prompt gets written again.";
+  if (data.routeChanged) return "The connection or model changed, so the whole prompt is recached.";
   if (first) {
     const place = `message ${(first.newIndex ?? first.oldIndex ?? 0) + 1}, ${turnName(first)}`;
     return data.tolerated ? `Changes start at ${place}. That is inside your allowed tail.` : `Cache breaks at ${place}.`;
   }
   if (step.comparison.kind === "first") return "This is the starting prompt the tests compare against.";
   return step.comparison.kind === "append" ? "Only new text was added at the end. Everything before it stays cached." : "Nothing changed. The whole prompt stays cached.";
+}
+/** A break before the allowed tail can leave no checkpoint that far back, so the unchanged prefix may not be read either. */
+export function cacheMeter(step: SimulationStep, settings: Settings): HTMLElement[] {
+  const data = step.timeline!, atRisk = testState(step) === "broken" && !data.routeChanged && data.kept > 0 && data.rewritten > 0;
+  const total = Math.max(1, data.kept + data.rewritten + data.added), meter = el("div", `lc-meter${atRisk ? " lc-meter-risk" : ""}`); meter.setAttribute("aria-hidden", "true");
+  for (const [name, value] of [["kept", data.kept], ["lost", data.rewritten], ["new", data.added]] as const) { const part = el("i", `lc-meter-${name}`); part.style.flexGrow = String(value); meter.append(part); }
+  const share = (value: number) => `${Math.round(value / total * 100)}%`;
+  const tail = `depth ${settings.acceptableDepth ?? DEFAULT_ACCEPTABLE_DEPTH}${settings.acceptableTokens != null ? ` and ${settings.acceptableTokens.toLocaleString()} tokens` : ""}`;
+  const parts = atRisk
+    ? [`${share(data.kept)} is consistent but at risk of invalidation due to the remaining ${share(data.rewritten)} breaking cache outside of your allowed tail of ${tail}`]
+    : [`${share(data.kept)} cache consistent`, data.rewritten ? `${share(data.rewritten)} recached` : ""];
+  return [meter, el("p", `lc-muted lc-meter-copy${atRisk ? " lc-meter-copy-risk" : ""}`, [...parts, data.added ? `${share(data.added)} new` : ""].filter(Boolean).join(" · "))];
 }
 // The host allows two modals per extension, and the review modal may hold one.
 let turnModal: SpindleModalHandle | undefined;
@@ -62,12 +74,12 @@ export function openTurnModal(ctx: SpindleFrontendContext, client: Bridge, { row
   modal.root.replaceChildren(body);
 }
 function turnSentence(row: TimelineRow, tolerated: boolean) {
-  const place = row.root ? tolerated ? "Changes start here, inside your allowed tail. " : "The cache breaks here. Everything after this message gets written again. " : "";
+  const place = row.root ? tolerated ? "Changes start here, inside your allowed tail. " : "Cache breaks here. Because this is outside your tail, your entire context is at risk of cache invalidation. " : "";
   switch (row.status) {
     case "changed": return `${place}This message's text changed from the previous prompt.`;
     case "added": return `${place}This message was not in the previous prompt, and it landed before older messages.`;
     case "removed": return `${place}This message was in the previous prompt and is now gone.`;
-    case "rewritten": return "This message did not change, but it sits after the break, so it gets written again.";
+    case "rewritten": return "This message did not change, but it sits after the break, so it is recached.";
     case "new": return "New text at the end of the prompt. This is normal growth and does not break the cache.";
     case "kept": return "This message did not change and sits before any break, so it stays cached.";
     default: return "Part of the starting prompt the tests compare against.";
@@ -225,10 +237,7 @@ export class HealthPanel {
       card.append(el("p", "lc-test-purpose", step.purpose));
       if (data) {
         card.append(el("p", "lc-test-result", testSentence(step)));
-        const total = Math.max(1, data.kept + data.rewritten + data.added), meter = el("div", "lc-meter"); meter.setAttribute("aria-hidden", "true");
-        for (const [name, value] of [["kept", data.kept], ["lost", data.rewritten], ["new", data.added]] as const) { const part = el("i", `lc-meter-${name}`); part.style.flexGrow = String(value); meter.append(part); }
-        const share = (value: number) => `${Math.round(value / total * 100)}%`;
-        card.append(meter, el("p", "lc-muted lc-meter-copy", [`${share(data.kept)} stays cached`, data.rewritten ? `${share(data.rewritten)} written again` : "", data.added ? `${share(data.added)} new` : ""].filter(Boolean).join(" \u00B7 ")));
+        card.append(...cacheMeter(step, this.settings));
       }
       if (this.lane === "history") card.append(el("p", "lc-muted", "Rebuilt with your current settings, so this is not an exact replay."));
       if (step.clipping?.messagesDropped) card.append(el("p", "lc-issue-ink", `${step.clipping.messagesDropped} history messages clipped`));

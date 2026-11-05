@@ -202,6 +202,8 @@ details[open] > summary > .lc-chevron { transform:rotate(90deg); }
 .lc-meter { display:flex; height:6px; gap:1px; border-radius:3px; overflow:hidden; margin:7px 0 4px; background:var(--lc-soft); }
 .lc-meter > i { flex:0 0 0; min-width:0; }
 .lc-meter-kept { background:var(--lc-ok); } .lc-meter-lost { background:var(--lc-bad); } .lc-meter-new { background:var(--lc-accent); }
+.lc-meter-risk .lc-meter-kept { background:repeating-linear-gradient(135deg,var(--lc-bad) 0 3px,var(--lc-ok) 3px 8px); }
+.lc-meter-copy-risk { color:var(--lc-bad); }
 .lc-tl { display:flex; flex-direction:column; flex:1 1 auto; min-height:400px; gap:7px; }
 .lc-tl-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
 .lc-tl-legend { display:flex; flex-wrap:wrap; gap:3px 9px; min-width:0; }
