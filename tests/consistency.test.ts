@@ -10,8 +10,8 @@ const force=validateSettings({mode:"pause",forceConsistency:true,acceptableDepth
 const flush=async()=>{for(let i=0;i<10;i++)await Promise.resolve();};
 async function sent(guard:Guard,messages:LlmMessageDTO[],settings=force,success=true) { const c=context(); const result=await guard.inspect(messages,c,settings); guard.finish(c.userId,c.generationId,success);return result; }
 describe("cache consistency",()=>{
- test("legacy settings migrate to depth five, ignored token limit and opt-in mutations",()=>{
-  expect(validateSettings({mode:"pause"})).toMatchObject({acceptableDepth:5,acceptableTokens:null,forceConsistency:false,refreshEnabled:true});
+ test("legacy settings migrate to depth two, ignored token limit and opt-in mutations",()=>{
+  expect(validateSettings({mode:"pause"})).toMatchObject({acceptableDepth:2,acceptableTokens:null,forceConsistency:false,refreshEnabled:true});
   for(const invalid of [{acceptableDepth:-1},{acceptableTokens:"100"},{refreshEvery:0},{forceConsistency:"true"},{hiddenCategories:["bogus"]}]) expect(()=>validateSettings({mode:"pause",...invalid})).toThrow();
   expect(validateSettings({mode:"warn",acceptableDepth:null,acceptableTokens:0}).acceptableTokens).toBe(0);
  });
@@ -19,7 +19,7 @@ describe("cache consistency",()=>{
   const messages=[instruction(),h(1,"a".repeat(100)),h(2,"b".repeat(1000)),h(3,"c".repeat(100))];
   const count=async(m:LlmMessageDTO[])=>({total_tokens:m.reduce((n,x)=>n+String(x.content).length,0),approximate:true});
   expect(await tailStart(messages,validateSettings({mode:"pause",acceptableTokens:200}),context(),count)).toEqual({index:3,approximate:true});
-  expect((await tailStart(messages,validateSettings({mode:"pause"}),context(),async()=>{throw Error("must not count");})).index).toBe(1);
+  expect((await tailStart(messages,validateSettings({mode:"pause"}),context(),async()=>{throw Error("must not count");})).index).toBe(2);
  });
  test("out-of-range injections move to the end or allowed boundary, retaining order",async()=>{
   const input=[instruction(),h(1),instruction("A"),instruction("B"),...Array.from({length:7},(_,i)=>h(i+2))];

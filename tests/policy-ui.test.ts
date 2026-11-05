@@ -13,10 +13,10 @@ const rows:Finding[]=[{id:"safe",category:"Depth Mutable",group:"Preset · Main"
  {id:"bad",category:"Depth Mutable",group:"World info · Lore",item:"Deep note",level:"depth",depth:6,title:"Depth 6",source:"World info",detail:"",suggestion:"",problematic:true},
  {id:"risk",category:"Regex",level:"risk",title:"Runtime operation",source:"Regex",detail:"",suggestion:""},
  {id:"issue",category:"World info",level:"issue",title:"Keyword activation",source:"World info",detail:"",suggestion:""}];
-test("settings display depth five and blank token cap, and preserve explicit zero",()=>{
+test("settings display depth two and blank token cap, and preserve explicit zero",()=>{
  const patches:Partial<Settings>[]=[]; const root=policySettings({mode:"pause"},false,p=>patches.push(p));
  const depth=root.querySelector<HTMLInputElement>('[aria-label="Acceptable depth"]')!, tokens=root.querySelector<HTMLInputElement>('[aria-label="History token limit"]')!;
- expect(depth.value).toBe("5");expect(tokens.value).toBe("");expect(root.querySelector<HTMLInputElement>('[role="switch"]')!.checked).toBe(false);
+ expect(depth.value).toBe("2");expect(tokens.value).toBe("");expect(root.querySelector<HTMLInputElement>('[role="switch"]')!.checked).toBe(false);
  tokens.value="0";tokens.dispatchEvent(new window.Event("change") as unknown as Event);(root.querySelector("button") as HTMLButtonElement).click();expect(patches.at(-1)).toMatchObject({acceptableTokens:0});
  tokens.value="";tokens.dispatchEvent(new window.Event("change") as unknown as Event);depth.value="4";depth.dispatchEvent(new window.Event("change") as unknown as Event);(root.querySelector("button") as HTMLButtonElement).click();expect(patches.at(-1)).toMatchObject({acceptableTokens:null});
  root.setBusy(true);expect(depth.disabled).toBe(true);root.setBusy(false);expect(depth.value).toBe("4");expect(depth.disabled).toBe(false);

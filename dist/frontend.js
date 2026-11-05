@@ -1,7 +1,7 @@
 // src/shared.ts
 var DEFAULT_SETTINGS = {
   mode: "warn",
-  acceptableDepth: 5,
+  acceptableDepth: 2,
   acceptableTokens: null,
   forceConsistency: false,
   overflowPlacement: "end",
