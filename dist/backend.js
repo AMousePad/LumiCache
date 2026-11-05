@@ -2585,6 +2585,7 @@ var DEFAULT_SETTINGS = {
   autoRefreshEnabled: false,
   autoRefreshMinutes: 10,
   autoRefreshLimit: 3,
+  cacheTtl: true,
   hiddenCategories: []
 };
 var COVERAGE = "Compares assembled prompts before sending. Later host/provider changes, tools, cache expiry and provider cache state are not visible here. This is a cache-risk check, not a confirmed cache hit or miss.";
@@ -2628,7 +2629,7 @@ function validateSettings(value) {
     if (typeof n !== "number" || !Number.isInteger(n) || n < (required ? 1 : 0) || n > max)
       throw new Error(`Invalid ${key}: enter a whole number${required ? " greater than zero" : " or leave the limit blank"}.`);
   }
-  for (const key of ["forceConsistency", "refreshEnabled", "autoRefreshEnabled"])
+  for (const key of ["forceConsistency", "refreshEnabled", "autoRefreshEnabled", "cacheTtl"])
     if (typeof result[key] !== "boolean")
       throw new Error(`Invalid ${key}.`);
   if (!["end", "boundary"].includes(result.overflowPlacement))
@@ -2646,6 +2647,7 @@ function validateSettings(value) {
     autoRefreshEnabled: result.autoRefreshEnabled,
     autoRefreshMinutes: result.autoRefreshMinutes,
     autoRefreshLimit: result.autoRefreshLimit,
+    cacheTtl: result.cacheTtl,
     hiddenCategories: [...new Set(result.hiddenCategories)]
   };
 }
@@ -3175,6 +3177,92 @@ class HostContexts {
 // src/health/service.ts
 import { createHash as createHash5 } from "crypto";
 
+// src/cache-ttl.ts
+function host(url) {
+  try {
+    return url ? new URL(url).hostname.toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
+var on = (name, domains) => domains.some((domain) => name === domain || name.endsWith(`.${domain}`));
+var MOONSHOT_TTL = /^kimi-k3(\.1-pro)?([.-]|$)/i;
+var OPENAI_TTL = /^(gpt-5\.5(-pro)?|gpt-5\.4|gpt-5\.2|gpt-5\.1(-codex(-max|-mini)?|-chat-latest)?|gpt-5(-codex)?|gpt-4\.1)(-\d{4}-\d{2}-\d{2})?$/i;
+var FIXED2 = {
+  deepseek: { name: "DeepSeek", domains: ["deepseek.com"], long: true },
+  google: { name: "Google Gemini", domains: ["generativelanguage.googleapis.com"] },
+  xai: { name: "xAI", domains: ["x.ai"] },
+  zai: { name: "Z.ai", domains: ["z.ai", "bigmodel.cn"] },
+  mistral: { name: "Mistral", domains: ["mistral.ai"] },
+  groq: { name: "Groq", domains: ["groq.com"] },
+  fireworks: { name: "Fireworks", domains: ["fireworks.ai"] }
+};
+function lifetime(provider, model) {
+  if (provider === "google")
+    return /argon/i.test(model) ? "about 15\u201320 minutes for Gemini 4 Argon, from one unofficial report" : "about 3\u20135 minutes on average, but it varies";
+  if (provider === "zai")
+    return "5\u201330 minutes in one independent test";
+  if (provider === "openai")
+    return /^gpt-(5\.([6-9]|\d{2,})|[6-9])/i.test(model) ? "30 minutes" : "usually 5\u201310 minutes, sometimes up to an hour";
+  return;
+}
+function ttlRoute(route) {
+  const where = host(route.endpointOrigin), model = route.model.replace(/^[^/]+\//, "");
+  const is = (provider, domains) => route.provider === provider || route.provider === "custom" && on(where, domains);
+  if (is("moonshot", ["moonshot.ai", "moonshot.cn", "kimi.ai", "kimi.com"]))
+    return MOONSHOT_TTL.test(model) ? { kind: "lumicache", name: "Moonshot", parameters: { prompt_cache_options: { mode: "implicit", ttl: "1h" } } } : { kind: "fixed", name: "Moonshot" };
+  if (is("openai", ["api.openai.com"]))
+    return OPENAI_TTL.test(model) ? { kind: "lumicache", name: "OpenAI", parameters: { prompt_cache_retention: "24h" } } : { kind: "fixed", name: "OpenAI", lifetime: lifetime("openai", model) };
+  if (route.provider === "anthropic")
+    return { kind: "connection", name: "Anthropic" };
+  if (route.provider === "nanogpt")
+    return /claude/i.test(model) ? { kind: "connection", name: "NanoGPT" } : { kind: "fixed", name: "NanoGPT" };
+  for (const [provider, known] of Object.entries(FIXED2))
+    if (is(provider, known.domains))
+      return { kind: "fixed", name: known.name, long: known.long, lifetime: lifetime(provider, model) };
+  return { kind: "unknown" };
+}
+function ttlParameters(route, settings) {
+  const ttl = ttlRoute(route);
+  return settings.cacheTtl !== false && ttl.kind === "lumicache" ? ttl.parameters : undefined;
+}
+var record = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : null;
+var KEEP_WARM = "Keep Cache Warm in LumiCache settings";
+function ttlFinding(connection, model, settings) {
+  const ttl = ttlRoute({ provider: connection.provider, model, endpointOrigin: connection.api_url });
+  const finding = (level, title, detail, suggestion) => ({ category: "Connection", id: "cache-ttl", level, pinned: true, title, source: "Connection", item: connection.name, detail, suggestion });
+  if (ttl.kind === "connection") {
+    if (settings.autoRefreshEnabled && settings.autoRefreshMinutes < 5)
+      return null;
+    const what = "This connection asks for a 5 minute cache, so a pause of more than 5 minutes between replies means paying for the whole prompt again. LumiCache can't change it, because Lumiverse sets it from the connection.";
+    const warm = `, or turn on ${KEEP_WARM} with an interval under 5 minutes.`;
+    if (connection.provider === "anthropic") {
+      const caching = connection.metadata?.prompt_caching, options = record(caching);
+      if (caching !== true && !options || options?.ttl === "1h")
+        return null;
+      return finding("issue", "Cache lasts 5 minutes", what, `Open this connection's settings and set Prompt cache TTL to 1h${warm}`);
+    }
+    const options = record(connection.metadata?.nanogpt_caching);
+    if (options?.enabled === true && options.ttl === "1h")
+      return null;
+    return finding("issue", "Cache lasts 5 minutes", what, `Open this connection's settings${options?.enabled === true ? "" : ", turn on caching,"} and set the cache TTL to 1h${warm}`);
+  }
+  if (ttl.kind === "fixed" && ttl.long)
+    return null;
+  if (ttl.kind === "fixed") {
+    const interval = "Find your provider and model's cache lifetime and set the Keep Cache Warm interval below it.";
+    return finding("risk", "Cache may expire between replies", `${ttl.name} keeps the cache for a while after your last request, then throws it away, and there's no setting to make that longer.${ttl.lifetime ? ` Reported lifetime: ${ttl.lifetime}.` : ""} After a long enough pause, the whole prompt is paid for again.`, settings.autoRefreshEnabled ? `Keep Cache Warm is on, every ${settings.autoRefreshMinutes} minutes. ${interval}` : `If you want to prevent cache timeouts for ${ttl.name}, turn on ${KEEP_WARM}. ${interval}`);
+  }
+  if (settings.autoRefreshEnabled)
+    return null;
+  if (ttl.kind === "lumicache") {
+    if (settings.cacheTtl)
+      return null;
+    return finding("risk", "LumiCache isn't setting your cache lifetime", `${ttl.name} can keep your cache longer if LumiCache asks, but Set long cache lifetime is off.`, "Turn this on in the LumiCache settings.");
+  }
+  return finding("risk", "Check your cache lifetime", "LumiCache doesn't know how this provider caches. Cache lifetime is how long a provider keeps the cache after your last request before throwing it away. If it's too short, a pause between replies means paying for the whole prompt again.", `Set the cache lifetime high enough in your preset's custom request body, or turn on ${KEEP_WARM} if you can't set it to a comfortable value.`);
+}
+
 // src/health/depth.ts
 async function classifyDepth(report, settings, messages, api, userId) {
   const policy = validateSettings(settings);
@@ -3392,6 +3480,12 @@ async function memoryFinding(api, user, settleMs = 1500) {
 function signature(value) {
   return createHash5("sha256").update(stableJson(value)).digest("hex");
 }
+function withCacheTtl(report, sources, settings) {
+  const finding = ttlFinding(sources.connection, report.model, validateSettings(settings));
+  if (finding)
+    report.findings.unshift(finding);
+  return report;
+}
 
 class HealthService {
   api;
@@ -3428,7 +3522,8 @@ class HealthService {
     const messages = sources.messages ?? [];
     const latest = [...messages].reverse().find((message) => !message.is_user && message.content);
     const usage = latest ? reportedUsage(await this.api.generate.getBreakdown(latest.id, user), latest.id) : undefined;
-    const report = await classifyDepth(analyze(sources, preview, usage), await this.settings(user), preview.messages, this.api, user);
+    const settings = await this.settings(user);
+    const report = withCacheTtl(await classifyDepth(analyze(sources, preview, usage), settings, preview.messages, this.api, user), sources, settings);
     report.findings.push(...await memoryFinding(this.api, user));
     return report;
   }
@@ -3595,7 +3690,8 @@ class HealthService {
         const tolerated = base ? await this.tolerated(user, base.result.request_messages, result.request_messages, comparison, contextFor(result)) : false;
         const timeline = buildTimeline(base?.snapshot ?? null, base?.outline ?? null, after, outline, comparison, tolerated);
         if (!base) {
-          report.health = await classifyDepth(analyze(job.sources, result), await this.settings(user), result.messages, this.api, user);
+          const settings = await this.settings(user);
+          report.health = withCacheTtl(await classifyDepth(analyze(job.sources, result), settings, result.messages, this.api, user), job.sources, settings);
           for (const finding of report.health.findings)
             if (finding.id.startsWith("context-"))
               reportedContext.add(finding.id);
@@ -3751,7 +3847,7 @@ Reset comparison (gear) clears the chat's native and CAT baselines; the next suc
   {
     id: "policy",
     label: "Settings, mutable tail and forced consistency",
-    text: `Settings are per user; edit the gear panel then Save settings. Defaults: mode=warn, acceptableDepth=blank (uses 2), acceptableTokens=null, forceConsistency=false, overflowPlacement=end, refreshEnabled=true, refreshEvery=20, autoRefreshEnabled=false, autoRefreshMinutes=10, autoRefreshLimit=3.
+    text: `Settings are per user; edit the gear panel then Save settings. Defaults: mode=warn, acceptableDepth=blank (uses 2), acceptableTokens=null, forceConsistency=false, overflowPlacement=end, refreshEnabled=true, refreshEvery=20, autoRefreshEnabled=false, autoRefreshMinutes=10, autoRefreshLimit=3, cacheTtl=true.
 Mutable tail: acceptableDepth counts history messages from the most recent (0 allows none; blank uses the default of 2). History token limit bounds that tail using Lumiverse's possibly approximate tokenizer (blank ignores tokens). Both set limits apply. The tail never includes the leading instruction prefix. Ordinary tail tolerance requires existing history content/identity to remain unchanged. Connection/model/dispatch changes still count as breaks.
 Force cache consistency restores the previous outgoing protected prefix, instructions/lore and prior history content; newly appended history remains. Fresh out-of-range injections move after the last message (end) or to the allowed boundary (boundary). Edits or swipes that change a message's sent text release it and everything newer; only older messages stay frozen. Frozen guidance may remain in old history. Requires preserved history source IDs and indexes; another extension stripping them can make it fail. Context limits still apply.
 Allow scheduled cache breaks accepts current content after refreshEvery successful replies, then establishes a new baseline on success. It only runs with forced consistency, since a prompt that is not frozen has nothing to release. In LumiBooks Cache Friendly mode, its epoch replaces the timer; route changes still require normal review. Reset comparison applies current content on the next successful send.
@@ -3763,6 +3859,7 @@ Health category filters (risk/issue/depth) affect display only. They do not chan
     label: "Health findings and cache-friendly edits",
     text: `Health automatically rechecks the active chat/connection after relevant settings/content changes and completed generations; Refresh runs it again. Checks wait while generation, review or simulation is active. It scans effective preset blocks, enabled world info, character/persona text, included history, prompt regex and Compose selections/filters, then uses a native assembly preview for clipping/depth evidence.
 Findings identify source/group/item, evidence, explanation and suggestion. Issue=known changing behavior; risk=depends on runtime values; Variabled=a conditional checking a variable or preset setting ({{var::name}}) with no sign that it changes on its own, stable until it is changed, and it never makes dependent text a risk; fixed values such as {{char}}, {{scenario}}, {{description}} and {{groupCardMode}} are not flagged, except that card fields follow the focused character in swap-mode group chats; Depth Mutable=in-history insertion compared with your depth/token limits. Expand groups/items; pill buttons filter categories. Read unknown/incomplete/omitted findings as coverage limits, not a clean bill of health.
+Cache lifetime is pinned first: an issue for Anthropic or NanoGPT Claude connections at 5 minutes (fix in connection settings); a risk for other short-lived providers unless cacheTtl sets it; warming needs an interval under the lifetime.
 Typical causes: random/time/history-dependent macros or conditions; keyword/vector lore activation; moving depth injections; prompt regex changing earlier text; Compose transformations; history clipping or over-budget fixed content; connection/model changes. Missing cache-friendly memory management produces a LumiBooks recommendation when its absence is established. Cache-read/write usage is reported when saved provider metadata supplies it, separately from predicted risk.
 For cache-friendly edits: inspect the named source; keep stable instructions/lore early, move changing guidance into the allowed tail, avoid rewriting old history, and leave room for growth. Constant lore avoids activation churn but consumes context and world-info budgets. Re-audit, simulate, then inspect a real outgoing diff. Neither a clean audit nor a stable preview guarantees future stability or a cache hit. The bridge provides evidence; it does not edit presets, lore, chats or policy.`
   },
@@ -4457,6 +4554,15 @@ async function plannedBreakEpoch(user, chatId) {
   const chat = await readLumiBooks(`lumi_books.cache_epoch.${chatId}`);
   return `${mode.codexEnabled === false ? "no-codex" : "codex"}:${typeof chat?.epoch === "string" ? chat.epoch : ""}`;
 }
+async function cacheTtlParameters(raw, config) {
+  let route = raw.mainDispatch?.descriptor ?? undefined;
+  if (!route) {
+    const connection = raw.connectionId ? await spindle.connections.get(raw.connectionId, raw.userId) : (await spindle.connections.list(raw.userId)).find((c) => c.is_default);
+    if (connection)
+      route = { provider: connection.provider, model: connection.model, endpointOrigin: connection.api_url };
+  }
+  return route ? ttlParameters(route, config) : undefined;
+}
 function text(value) {
   if (typeof value !== "string" || !value || value.length > 200)
     throw new Error("Invalid LumiCache request.");
@@ -4494,11 +4600,13 @@ spindle.registerInterceptor(async (messages, context) => {
   if (raw.isDryRun || raw.dryRun)
     return messages;
   const config = await settings(raw.userId);
-  if (config.mode === "off") {
+  const parameters = config.cacheTtl ? await cacheTtlParameters(raw, config) : undefined;
+  let result = messages;
+  if (config.mode === "off")
     guard.unwatched(raw.userId, raw.chatId);
-    return messages;
-  }
-  return guard.inspect(messages, await contexts.resolve(raw, spindle), config, await plannedBreakEpoch(raw.userId, raw.chatId));
+  else
+    result = await guard.inspect(messages, await contexts.resolve(raw, spindle), config, await plannedBreakEpoch(raw.userId, raw.chatId));
+  return parameters ? { messages: result, parameters } : result;
 }, {
   priority: 2000000000,
   required: true,

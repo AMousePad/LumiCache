@@ -3,6 +3,7 @@ import type { ChatDTO, DryRunResultDTO, LlmMessageDTO, SpindleAPI } from "lumive
 import { compare, snapshot, stableJson } from "../compare";
 import { DEFAULT_SETTINGS, errorText, type Comparison, type InspectionContext, type Settings, type Snapshot } from "../shared";
 import { validateSettings } from "../settings";
+import { ttlFinding } from "../cache-ttl";
 import { classifyDepth } from "./depth";
 import { analyze, clippingFindings, reportedUsage } from "./analyze";
 import { collectSources, type Sources } from "./sources";
@@ -16,6 +17,12 @@ import type { AuditInput, HealthReport, OutlineTurn, SimulationReport, Simulatio
 interface Job { user: string; session: string; sources: Sources; ticket: SimulationTicket; expires: number; running: boolean; cancelled: boolean; timer: ReturnType<typeof setTimeout> }
 interface PreparedPreview extends DryRunResultDTO { request_messages?: LlmMessageDTO[] }
 function signature(value: unknown) { return createHash("sha256").update(stableJson(value)).digest("hex"); }
+/** Settings-dependent, so it is added after analysis. */
+function withCacheTtl(report: HealthReport, sources: Sources, settings: Settings): HealthReport {
+  const finding = ttlFinding(sources.connection, report.model, validateSettings(settings));
+  if (finding) report.findings.unshift(finding);
+  return report;
+}
 export class HealthService {
   private jobs = new Map<string, Job>();
   private preparing = new Set<string>();
@@ -35,7 +42,8 @@ export class HealthService {
     const messages = sources.messages ?? [];
     const latest = [...messages].reverse().find(message => !message.is_user && message.content);
     const usage = latest ? reportedUsage(await this.api.generate.getBreakdown(latest.id, user), latest.id) : undefined;
-    const report = await classifyDepth(analyze(sources, preview, usage), await this.settings(user), preview.messages, this.api, user);
+    const settings = await this.settings(user);
+    const report = withCacheTtl(await classifyDepth(analyze(sources, preview, usage), settings, preview.messages, this.api, user), sources, settings);
     report.findings.push(...await memoryFinding(this.api, user));
     return report;
   }
@@ -143,7 +151,8 @@ export class HealthService {
         const tolerated = base ? await this.tolerated(user, base.result.request_messages!, result.request_messages!, comparison, contextFor(result)) : false;
         const timeline = buildTimeline(base?.snapshot ?? null, base?.outline ?? null, after, outline, comparison, tolerated);
         if (!base) {
-          report.health = await classifyDepth(analyze(job.sources, result), await this.settings(user), result.messages, this.api, user);
+          const settings = await this.settings(user);
+          report.health = withCacheTtl(await classifyDepth(analyze(job.sources, result), settings, result.messages, this.api, user), job.sources, settings);
           for (const finding of report.health.findings) if (finding.id.startsWith("context-")) reportedContext.add(finding.id);
           if (scratch.metadata.lumicache_omitted_audio) report.health.findings.push({ id: "audio-not-simulated", level: "unknown", title: "Audio attachment caching was not simulated", source: "Attachments",
             detail: `${scratch.metadata.lumicache_omitted_audio} audio attachments were excluded from the disposable copy to preserve their original files.`, suggestion: "Use the original request's diff and saved provider usage to inspect audio-related changes." });

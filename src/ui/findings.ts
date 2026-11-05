@@ -72,8 +72,14 @@ export function renderFindings(rows: Finding[], open: Set<string>): HTMLElement 
     };
     append(); return list;
   };
+  for (const row of actionable(rows).filter(row => row.pinned)) {
+    const card = el("div", `lc-pinned lc-pinned-${row.level === "risk" ? "risk" : "issue"}`), copy = el("div", "lc-row-copy");
+    card.setAttribute("role", "alert");
+    copy.append(el("strong", "", row.title), ...(row.item ? [el("small", "lc-muted", row.item)] : []), el("p", "", row.detail), el("p", "lc-fix", row.suggestion));
+    card.append(el("span", row.level === "risk" ? "lc-dot" : "lc-dot lc-dot-issue"), copy); root.append(card);
+  }
   for (const category of CATEGORIES) {
-    const selected = actionable(rows).filter(row => (row.category ?? (row.level === "observed" ? "Simulation" : "Context")) === category);
+    const selected = actionable(rows).filter(row => !row.pinned && (row.category ?? (row.level === "observed" ? "Simulation" : "Context")) === category);
     if (!selected.length) continue;
     const summary = el("summary", "lc-group-summary");
     summary.append(icon(ICONS[category], "lc-group-icon"), el("span", "lc-group-name", category), badge(selected), icon("chevron", "lc-chevron"));

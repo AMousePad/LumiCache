@@ -11,6 +11,7 @@ var DEFAULT_SETTINGS = {
   autoRefreshEnabled: false,
   autoRefreshMinutes: 10,
   autoRefreshLimit: 3,
+  cacheTtl: true,
   hiddenCategories: []
 };
 function errorText(error) {
@@ -33,7 +34,7 @@ function validateSettings(value) {
     if (typeof n !== "number" || !Number.isInteger(n) || n < (required ? 1 : 0) || n > max)
       throw new Error(`Invalid ${key}: enter a whole number${required ? " greater than zero" : " or leave the limit blank"}.`);
   }
-  for (const key of ["forceConsistency", "refreshEnabled", "autoRefreshEnabled"])
+  for (const key of ["forceConsistency", "refreshEnabled", "autoRefreshEnabled", "cacheTtl"])
     if (typeof result[key] !== "boolean")
       throw new Error(`Invalid ${key}.`);
   if (!["end", "boundary"].includes(result.overflowPlacement))
@@ -51,9 +52,13 @@ function validateSettings(value) {
     autoRefreshEnabled: result.autoRefreshEnabled,
     autoRefreshMinutes: result.autoRefreshMinutes,
     autoRefreshLimit: result.autoRefreshLimit,
+    cacheTtl: result.cacheTtl,
     hiddenCategories: [...new Set(result.hiddenCategories)]
   };
 }
+
+// src/cache-ttl.ts
+var TTL_PROVIDERS = "Kimi K3 and K3.1 Pro on Moonshot (1 hour), and OpenAI GPT-4.1, GPT-5, GPT-5.1, GPT-5.2, GPT-5.4 and GPT-5.5 (24 hours)";
 
 // src/ui/elements.ts
 function el(tag, className = "", text) {
@@ -182,6 +187,9 @@ function policySettings(value, busy, save) {
   });
   interval = number(refresh, "refreshEvery", "Successful replies between refreshes", "20");
   interval.hidden = !draft.refreshEnabled;
+  const lifetime = section("Cache lifetime");
+  toggle(lifetime, "cacheTtl", "Set long cache lifetime", "Asks supported providers to keep your cache longer after your last request. Cache writes can cost more.", () => {});
+  lifetime.append(el("p", "lc-muted", `Supported: ${TTL_PROVIDERS}. Anthropic and NanoGPT Claude connections set this in their own connection settings. Health warns at the top when your provider's cache lifetime may be too short.`));
   const idle = section("Keep Cache Warm");
   let idleFields = [];
   toggle(idle, "autoRefreshEnabled", "Keep Cache Warm", "Periodically resends the chat's last prompt to prevent cache expiry.", () => {
@@ -720,6 +728,10 @@ var STYLES = `
 .lc-updating { opacity:.65; }
 .lc-health-pending { font-size:12px; color:var(--lc-muted); padding:9px 0; }
 .lc-groups { display:flex; flex-direction:column; gap:10px; }
+.lc-pinned { display:flex; gap:9px; padding:10px 12px; border:1px solid var(--lc-issue); border-radius:9px; background:color-mix(in srgb,var(--lc-issue) 9%,transparent); }
+.lc-pinned-risk { border-color:var(--lc-risk); background:color-mix(in srgb,var(--lc-risk) 9%,transparent); }
+.lc-pinned .lc-row-copy { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.lc-pinned p { margin:0; font-size:12px; overflow-wrap:anywhere; }
 .lc-group { border:1px solid var(--lc-line); border-radius:13px; background:color-mix(in srgb,var(--lc-panel) 55%,var(--lc-bg)); overflow:hidden; }
 .lc-root summary { cursor:pointer; list-style:none; }
 .lc-root summary::-webkit-details-marker { display:none; }
@@ -1612,8 +1624,15 @@ function renderFindings(rows, open) {
     append();
     return list;
   };
+  for (const row of actionable(rows).filter((row) => row.pinned)) {
+    const card = el("div", `lc-pinned lc-pinned-${row.level === "risk" ? "risk" : "issue"}`), copy = el("div", "lc-row-copy");
+    card.setAttribute("role", "alert");
+    copy.append(el("strong", "", row.title), ...row.item ? [el("small", "lc-muted", row.item)] : [], el("p", "", row.detail), el("p", "lc-fix", row.suggestion));
+    card.append(el("span", row.level === "risk" ? "lc-dot" : "lc-dot lc-dot-issue"), copy);
+    root.append(card);
+  }
   for (const category of CATEGORIES) {
-    const selected = actionable(rows).filter((row) => (row.category ?? (row.level === "observed" ? "Simulation" : "Context")) === category);
+    const selected = actionable(rows).filter((row) => !row.pinned && (row.category ?? (row.level === "observed" ? "Simulation" : "Context")) === category);
     if (!selected.length)
       continue;
     const summary = el("summary", "lc-group-summary");
@@ -1857,7 +1876,7 @@ class HealthPanel {
   }
   configure(settings, toggle) {
     const next = validateSettings(settings), changed = JSON.stringify(next) !== JSON.stringify(this.settings);
-    const policyChanged = next.acceptableDepth !== this.settings.acceptableDepth || next.acceptableTokens !== this.settings.acceptableTokens;
+    const policyChanged = next.acceptableDepth !== this.settings.acceptableDepth || next.acceptableTokens !== this.settings.acceptableTokens || next.cacheTtl !== this.settings.cacheTtl || next.autoRefreshEnabled !== this.settings.autoRefreshEnabled || next.autoRefreshMinutes !== this.settings.autoRefreshMinutes;
     this.settings = next;
     this.toggleCategory = toggle;
     if (policyChanged)

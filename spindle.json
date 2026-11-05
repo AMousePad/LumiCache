@@ -6,7 +6,7 @@
   "github": "https://github.com/AMousePad/LumiCache",
   "homepage": "https://github.com/AMousePad/LumiCache",
   "description": "Review changes to your prompt prefix before sending, with cache-break warnings and diffs.",
-  "permissions": ["interceptor", "generation", "chats", "chat_mutation", "presets", "characters", "personas", "world_books", "regex_scripts"],
+  "permissions": ["interceptor", "generation", "chats", "chat_mutation", "presets", "characters", "personas", "world_books", "regex_scripts", "generation_parameters"],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
   "minimum_lumiverse_version": "1.3.0",

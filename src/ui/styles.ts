@@ -80,6 +80,10 @@ export const STYLES = `
 .lc-updating { opacity:.65; }
 .lc-health-pending { font-size:12px; color:var(--lc-muted); padding:9px 0; }
 .lc-groups { display:flex; flex-direction:column; gap:10px; }
+.lc-pinned { display:flex; gap:9px; padding:10px 12px; border:1px solid var(--lc-issue); border-radius:9px; background:color-mix(in srgb,var(--lc-issue) 9%,transparent); }
+.lc-pinned-risk { border-color:var(--lc-risk); background:color-mix(in srgb,var(--lc-risk) 9%,transparent); }
+.lc-pinned .lc-row-copy { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.lc-pinned p { margin:0; font-size:12px; overflow-wrap:anywhere; }
 .lc-group { border:1px solid var(--lc-line); border-radius:13px; background:color-mix(in srgb,var(--lc-panel) 55%,var(--lc-bg)); overflow:hidden; }
 .lc-root summary { cursor:pointer; list-style:none; }
 .lc-root summary::-webkit-details-marker { display:none; }

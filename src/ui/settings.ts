@@ -1,5 +1,6 @@
 import { DEFAULT_ACCEPTABLE_DEPTH, type Settings } from "../shared";
 import { validateSettings } from "../settings";
+import { TTL_PROVIDERS } from "../cache-ttl";
 import { button,el } from "./elements";
 export function policySettings(value: Settings, busy: boolean, save: (patch: Partial<Settings>) => void): HTMLElement & { setBusy(value: boolean): void } {
   const initial=validateSettings(value), draft={...initial}, root=el("div","lc-policy-settings");
@@ -21,7 +22,7 @@ export function policySettings(value: Settings, busy: boolean, save: (patch: Par
     const changed=()=>{Object.assign(draft,{[key]:input.value===""?null:Number(input.value)});update();};input.addEventListener("input",changed);input.addEventListener("change",changed);
     row.append(el("span","",title),input);parent.append(row);return row;
   };
-  const toggle=(parent:HTMLElement,key:"forceConsistency"|"refreshEnabled"|"autoRefreshEnabled",title:string,subtitle:string,changed:()=>void)=>{
+  const toggle=(parent:HTMLElement,key:"forceConsistency"|"refreshEnabled"|"autoRefreshEnabled"|"cacheTtl",title:string,subtitle:string,changed:()=>void)=>{
     const label=el("label","lc-setting-row lc-switch-row"), copy=el("span","lc-setting-copy"), input=el("input","lc-switch");
     input.type="checkbox";input.checked=draft[key];input.disabled=busy;input.setAttribute("role","switch");input.setAttribute("aria-label",title);input.dataset.setting=key;
     input.addEventListener("change",()=>{draft[key]=input.checked;changed();update();});copy.append(el("strong","",title),el("small","lc-muted",subtitle));label.append(copy,input);parent.append(label);
@@ -34,6 +35,9 @@ export function policySettings(value: Settings, busy: boolean, save: (patch: Par
   refresh=section("Periodic refresh");refresh.hidden=!draft.forceConsistency;let interval:HTMLElement;
   toggle(refresh,"refreshEnabled","Allow scheduled cache breaks","Apply current prompt changes after a set number of replies.",()=>{interval.hidden=!draft.refreshEnabled;});
   interval=number(refresh,"refreshEvery","Successful replies between refreshes","20");interval.hidden=!draft.refreshEnabled;
+  const lifetime=section("Cache lifetime");
+  toggle(lifetime,"cacheTtl","Set long cache lifetime","Asks supported providers to keep your cache longer after your last request. Cache writes can cost more.",()=>{});
+  lifetime.append(el("p","lc-muted",`Supported: ${TTL_PROVIDERS}. Anthropic and NanoGPT Claude connections set this in their own connection settings. Health warns at the top when your provider's cache lifetime may be too short.`));
   const idle=section("Keep Cache Warm");let idleFields:HTMLElement[]=[];
   toggle(idle,"autoRefreshEnabled","Keep Cache Warm","Periodically resends the chat's last prompt to prevent cache expiry.",()=>{idleFields.forEach(field=>{field.hidden=!draft.autoRefreshEnabled;});});
   idleFields=[number(idle,"autoRefreshMinutes","Minutes between refreshes","10"),number(idle,"autoRefreshLimit","Maximum refreshes after each reply","3"),el("p","lc-muted","Starts after a successful reply. Set the interval ~30s shorter than your provider's cache lifetime. You can also turn this on or off from the input bar drawer.")];

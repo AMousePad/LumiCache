@@ -31,11 +31,11 @@ export function validateSettings(value: unknown): Required<Settings> {
     if (!required && n === null) continue;
     if (typeof n !== "number" || !Number.isInteger(n) || n < (required ? 1 : 0) || n > max) throw new Error(`Invalid ${key}: enter a whole number${required ? " greater than zero" : " or leave the limit blank"}.`);
   }
-  for (const key of ["forceConsistency", "refreshEnabled", "autoRefreshEnabled"] as const) if (typeof result[key] !== "boolean") throw new Error(`Invalid ${key}.`);
+  for (const key of ["forceConsistency", "refreshEnabled", "autoRefreshEnabled", "cacheTtl"] as const) if (typeof result[key] !== "boolean") throw new Error(`Invalid ${key}.`);
   if (!["end", "boundary"].includes(result.overflowPlacement)) throw new Error("Choose a valid injection destination.");
   if (!Array.isArray(result.hiddenCategories) || result.hiddenCategories.some(k => !["risk", "issue", "depth", "variabled"].includes(k))) throw new Error("Invalid category filters.");
   return { mode: result.mode, acceptableDepth: result.acceptableDepth, acceptableTokens: result.acceptableTokens,
     forceConsistency: result.forceConsistency, overflowPlacement: result.overflowPlacement,
     refreshEnabled: result.refreshEnabled, refreshEvery: result.refreshEvery,
-    autoRefreshEnabled: result.autoRefreshEnabled, autoRefreshMinutes: result.autoRefreshMinutes, autoRefreshLimit: result.autoRefreshLimit, hiddenCategories: [...new Set(result.hiddenCategories)] };
+    autoRefreshEnabled: result.autoRefreshEnabled, autoRefreshMinutes: result.autoRefreshMinutes, autoRefreshLimit: result.autoRefreshLimit, cacheTtl: result.cacheTtl, hiddenCategories: [...new Set(result.hiddenCategories)] };
 }

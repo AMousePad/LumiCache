@@ -22,6 +22,8 @@ export interface Finding {
   depthTokens?: number;
   tokenEstimate?: boolean;
   problematic?: boolean;
+  /** Shown open above every category. */
+  pinned?: boolean;
   title: string;
   source: string;
   detail: string;

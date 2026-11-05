@@ -11,6 +11,7 @@ import { AgentBridge } from "./agent-bridge";
 import { AutoRefresh } from "./auto-refresh";
 import { CatBridge } from "./cat-bridge";
 import { PromptStore } from "./prompt-store";
+import { ttlParameters, type Route } from "./cache-ttl";
 import { loadSettings, saveSettings, validateSettings } from "./settings";
 const prompts = new PromptStore();
 declare const spindle: SpindleAPI;
@@ -56,6 +57,15 @@ async function plannedBreakEpoch(user: string, chatId: string): Promise<string |
   const chat = await readLumiBooks<{ epoch?: unknown }>(`lumi_books.cache_epoch.${chatId}`);
   return `${mode.codexEnabled === false ? "no-codex" : "codex"}:${typeof chat?.epoch === "string" ? chat.epoch : ""}`;
 }
+/** Providers that take a cache lifetime per request get it added here. */
+async function cacheTtlParameters(raw: HostContext, config: Settings): Promise<Record<string, unknown> | undefined> {
+  let route: Route | undefined = raw.mainDispatch?.descriptor ?? undefined;
+  if (!route) {
+    const connection = raw.connectionId ? await spindle.connections.get(raw.connectionId, raw.userId) : (await spindle.connections.list(raw.userId)).find(c => c.is_default);
+    if (connection) route = { provider: connection.provider, model: connection.model, endpointOrigin: connection.api_url };
+  }
+  return route ? ttlParameters(route, config) : undefined;
+}
 function text(value: unknown): string {
   if (typeof value !== "string" || !value || value.length > 200) throw new Error("Invalid LumiCache request.");
   return value;
@@ -81,8 +91,11 @@ spindle.registerInterceptor(async (messages, context) => {
   const raw = context as HostContext;
   if (raw.isDryRun || raw.dryRun) return messages;
   const config = await settings(raw.userId);
-  if (config.mode === "off") { guard.unwatched(raw.userId, raw.chatId); return messages; }
-  return guard.inspect(messages, await contexts.resolve(raw, spindle), config, await plannedBreakEpoch(raw.userId, raw.chatId));
+  const parameters = config.cacheTtl ? await cacheTtlParameters(raw, config) : undefined;
+  let result = messages;
+  if (config.mode === "off") guard.unwatched(raw.userId, raw.chatId);
+  else result = await guard.inspect(messages, await contexts.resolve(raw, spindle), config, await plannedBreakEpoch(raw.userId, raw.chatId));
+  return parameters ? { messages: result, parameters } : result;
 }, {
   priority: 2_000_000_000, required: true,
   match: { generationTypes: ["normal", "continue", "regenerate", "swipe"] },

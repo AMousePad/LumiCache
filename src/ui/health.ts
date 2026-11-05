@@ -140,7 +140,7 @@ export class HealthPanel {
   }
   configure(settings: Settings, toggle: (category: Classification) => void) {
     const next = validateSettings(settings), changed = JSON.stringify(next) !== JSON.stringify(this.settings);
-    const policyChanged = next.acceptableDepth !== this.settings.acceptableDepth || next.acceptableTokens !== this.settings.acceptableTokens;
+    const policyChanged = next.acceptableDepth !== this.settings.acceptableDepth || next.acceptableTokens !== this.settings.acceptableTokens || next.cacheTtl !== this.settings.cacheTtl || next.autoRefreshEnabled !== this.settings.autoRefreshEnabled || next.autoRefreshMinutes !== this.settings.autoRefreshMinutes;
     this.settings = next; this.toggleCategory = toggle;
     if (policyChanged) this.auto.invalidate();
     if (changed) this.render();
