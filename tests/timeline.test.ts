@@ -127,6 +127,14 @@ test("the timeline shows every message, puts problems on its rail and opens the 
   const grown = renderTimeline(timeline(prompt().slice(0, 3), entries(), prompt(), entries()), () => {});
   expect([...grown.root.querySelectorAll(".lc-turn")].map(turn => turn.querySelector(".lc-turn-depth")?.textContent ?? null)).toEqual([null, null, "d0", "next d1", "next d0"]);
   grown.dispose();
+  // LumiBooks summaries before the first raw message read as memory, not system prompt, and get a depth.
+  const summarized = [prompt()[0], { role: "assistant", content: "Mira stole the key.", __lumibooksSummary: "Chapter (msgs 1–40)" } as LlmMessageDTO, ...prompt().slice(2)];
+  const book = renderTimeline(timeline(summarized, entries(), summarized, entries()), () => {});
+  const row = book.root.querySelectorAll(".lc-turn")[1];
+  expect(row.querySelector(".lc-turn-name")!.textContent).toBe("LumiBooks · Chapter (msgs 1–40)");
+  expect(row.querySelector(".lc-turn-kind")!.textContent).toBe("Memory");
+  expect(row.querySelector(".lc-turn-depth")!.textContent).toBe("d2");
+  book.dispose();
   const tolerated = renderTimeline({ ...data, tolerated: true }, () => {});
   expect(tolerated.root.querySelector(".lc-tl-break")!.textContent).toContain("allowed tail"); view.dispose(); tolerated.dispose();
 });

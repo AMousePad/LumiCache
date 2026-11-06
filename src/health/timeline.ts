@@ -1,4 +1,5 @@
 import type { AssemblyBreakdownEntryDTO, LlmMessageDTO } from "lumiverse-spindle-types";
+import { lumibooksSummary } from "../compare";
 import { alignMessages } from "../prompt-store";
 import type { Comparison, Snapshot } from "../shared";
 import type { OutlineTurn, StepTimeline, TimelineRow, TurnKind, TurnPart } from "./types";
@@ -37,7 +38,7 @@ function clean(text: string, size: number) { const value = text.replace(/\s+/g, 
 /** Name each assembled message, and the ranges inside it, after the breakdown entries that produced it. */
 export function promptOutline(snapshot: Snapshot, messages: LlmMessageDTO[], breakdown: AssemblyBreakdownEntryDTO[]): OutlineTurn[] {
   const flags = messages as Flags[], history = (m?: Flags) => m?.__isChatHistory === true || m?.__chatHistorySource === true;
-  const firstHistory = flags.findIndex(history);
+  const firstHistory = flags.findIndex(m => history(m) || lumibooksSummary(m) !== undefined);
   const entries = breakdown.filter(entry => entry.type !== "chat_history" && entry.content?.trim()).map(entry => ({ entry, text: entry.content!.trim() }));
   return snapshot.messages.map((message, index) => {
     const source = flags[index], text = message.body, role = message.role;
@@ -46,6 +47,11 @@ export function promptOutline(snapshot: Snapshot, messages: LlmMessageDTO[], bre
       const label = clean(source.name || (role === "user" ? "User" : role === "assistant" ? "Assistant" : "System"), 60);
       const chatIndex = source.sourceIndexInChat ?? source.__sourceIndexInChat;
       return { ...base, kind: "story" as const, label, injected: false, ...(chatIndex !== undefined ? { chatIndex } : {}), parts: [{ kind: "story" as const, label, start: 0, end: text.length }] };
+    }
+    const summary = source && lumibooksSummary(source);
+    if (summary !== undefined) {
+      const label = clean(`LumiBooks · ${summary || "Summary"}`, 120);
+      return { ...base, kind: "memory" as const, label, injected: true, parts: [{ kind: "memory" as const, label, start: 0, end: text.length }] };
     }
     const injected = firstHistory >= 0 && index > firstHistory;
     const fallback: TurnKind = source?.__worldInfoSource ? "world" : injected ? "injection" : "system";

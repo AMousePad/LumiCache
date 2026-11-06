@@ -58,6 +58,12 @@ describe("prompt prefix comparison", () => {
     const depths = (m: Parameters<typeof snapshot>[0]) => snapshot(m, context()).messages.map(x => x.depth);
     expect(depths([{ role: "system", content: "Prefix" }, chat("a"), { role: "system", content: "Note" }, chat("b", "__chatHistorySource"), { role: "system", content: "End" }])).toEqual([undefined, 1, 1, 0, 0]);
     expect(depths(messages())).toEqual([undefined, undefined]);
+    // A tagged LumiBooks summary starts history like the chat it replaces. Untagged (older LumiBooks), it stays prefix.
+    const summary = (tag?: string) => ({ role: "assistant" as const, content: "Chapter one", ...(tag !== undefined ? { __lumibooksSummary: tag } : {}) });
+    expect(depths([{ role: "system", content: "Prefix" }, summary("Chapter"), chat("a")])).toEqual([undefined, 1, 0]);
+    expect(depths([{ role: "system", content: "Prefix" }, summary(), chat("a")])).toEqual([undefined, undefined, 0]);
+    const ctx = context();
+    expect(compare(snapshot([summary()], ctx), snapshot([summary("Chapter")], ctx)).kind).toBe("same");
   });
   test("prompt limits reject rather than compare truncated text", () => {
     expect(() => snapshot(messages("x".repeat(MAX_PROMPT_CHARACTERS)), context())).toThrow("larger than");

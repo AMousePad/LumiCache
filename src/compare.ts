@@ -3,6 +3,11 @@ import { createHash } from "node:crypto";
 import type { Comparison, InspectionContext, PromptMessage, Snapshot } from "./shared";
 
 export const MAX_PROMPT_CHARACTERS = 32_000_000;
+/** The label LumiBooks puts on its injected summaries, or undefined for any other message. */
+export function lumibooksSummary(message: LlmMessageDTO): string | undefined {
+  const tag = (message as { __lumibooksSummary?: unknown }).__lumibooksSummary;
+  return typeof tag === "string" ? tag : undefined;
+}
 export function stableJson(value: unknown): string {
   return JSON.stringify(value, (_key, part) => {
     if (!part || typeof part !== "object" || Array.isArray(part)) return part;
@@ -46,7 +51,8 @@ export function snapshot(messages: LlmMessageDTO[], context: InspectionContext):
   }
   // Lumiverse's depth: how many chat messages follow. The leading prefix sits above all history, so it has none.
   const history = (m: LlmMessageDTO) => m.__isChatHistory === true || (m as { __chatHistorySource?: boolean }).__chatHistorySource === true;
-  const first = messages.findIndex(history);
+  // A LumiBooks summary stands in for the chat it covers, so history starts there too. Older LumiBooks has no tag, and its summaries stay prefix.
+  const first = messages.findIndex(m => history(m) || lumibooksSummary(m) !== undefined);
   for (let index = messages.length - 1, depth = 0; first >= 0 && index >= first; index--) {
     normalized[index].depth = depth;
     if (history(messages[index])) depth++;
