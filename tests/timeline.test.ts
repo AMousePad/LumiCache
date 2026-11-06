@@ -122,7 +122,11 @@ test("the timeline shows every message, puts problems on its rail and opens the 
   turns[1].click(); expect(opened).toEqual([1]);
   // Lumiverse depth: chat messages after the row, so the injection before the last message is depth 1, like its own setting.
   expect(turns.map(turn => turn.querySelector(".lc-turn-depth")?.textContent ?? null)).toEqual([null, null, "d1", "d1", "d0"]);
-  expect(turns[3].getAttribute("aria-label")).toContain("depth 1");
+  expect(turns[3].getAttribute("aria-label")).toContain("Depth 1 in the previous prompt");
+  // Rows the previous prompt had keep its depth, since the tail is measured there. New rows say where they land.
+  const grown = renderTimeline(timeline(prompt().slice(0, 3), entries(), prompt(), entries()), () => {});
+  expect([...grown.root.querySelectorAll(".lc-turn")].map(turn => turn.querySelector(".lc-turn-depth")?.textContent ?? null)).toEqual([null, null, "d0", "next d1", "next d0"]);
+  grown.dispose();
   const tolerated = renderTimeline({ ...data, tolerated: true }, () => {});
   expect(tolerated.root.querySelector(".lc-tl-break")!.textContent).toContain("allowed tail"); view.dispose(); tolerated.dispose();
 });

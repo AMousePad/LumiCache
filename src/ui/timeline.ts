@@ -6,8 +6,10 @@ export const STATUS_LABELS: Record<TurnStatus, string> = { base: "", kept: "", n
 export const isProblem = (row: TimelineRow) => row.status === "changed" || row.status === "added" || row.status === "removed";
 export const tokens = (characters: number) => { const value = Math.round(characters / 4); return `~${value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k` : value} tok`; };
 export const turnName = (row: TimelineRow) => row.kind === "story" && row.chatIndex !== undefined ? `Turn ${row.chatIndex + 1} · ${row.label}` : row.label;
-const rowHeight = (characters: number) => Math.round(46 + Math.min(34, Math.max(0, Math.log10(Math.max(1, characters)) - 2) * 12));
 const breakText = (tolerated: boolean) => tolerated ? "Change starts here, inside your allowed tail." : "Cache breaks here. Because this is outside your tail, your entire context is at risk of cache invalidation.";
+
+const depthText = (row: TimelineRow) => row.depth !== undefined ? { short: `d${row.depth}`, long: `Depth ${row.depth} in the previous prompt` }
+  : row.nextDepth !== undefined ? { short: `next d${row.nextDepth}`, long: `Depth ${row.nextDepth} once sent` } : undefined;
 
 export interface TimelineView { root: HTMLElement; attached(): void; dispose(): void }
 /** The rail is the list's scrollbar, so a colored band always lines up with the turns it stands for. */
@@ -25,7 +27,6 @@ export function renderTimeline(data: StepTimeline, open: (row: TimelineRow) => v
   for (const row of data.rows) {
     if (row.root) { breakTop = el("div", "lc-tl-break", breakText(data.tolerated)); list.append(breakTop); }
     const node = button("", () => open(row), "lc-turn"); node.dataset.status = row.status; node.dataset.kind = row.kind;
-    node.style.minHeight = `${rowHeight(row.characters)}px`;
     const stripe = el("span", "lc-turn-stripe");
     for (const part of row.parts.length ? row.parts : [{ kind: row.kind, share: 1, label: row.label }]) { const piece = el("i"); piece.dataset.kind = part.kind; piece.style.flexGrow = String(Math.max(0.04, part.share)); stripe.append(piece); }
     const copy = el("span", "lc-turn-copy"), title = el("span", "lc-turn-title");
@@ -34,10 +35,11 @@ export function renderTimeline(data: StepTimeline, open: (row: TimelineRow) => v
     const meta = el("span", "lc-turn-meta");
     if (STATUS_LABELS[row.status]) meta.append(el("span", "lc-turn-status", STATUS_LABELS[row.status]));
     // Same column as the size, so rows stay the same height and width on narrow screens.
-    if (row.depth !== undefined) { const depth = el("span", "lc-turn-depth", `d${row.depth}`); depth.title = `Depth ${row.depth}`; meta.append(depth); }
+    const depth = depthText(row);
+    if (depth) { const tag = el("span", "lc-turn-depth", depth.short); tag.title = depth.long; meta.append(tag); }
     meta.append(el("span", "lc-turn-size", tokens(row.characters)));
     node.append(stripe, copy, meta);
-    node.setAttribute("aria-label", [`Message ${(row.newIndex ?? row.oldIndex ?? 0) + 1}`, row.depth !== undefined ? `depth ${row.depth}` : "", KIND_LABELS[row.kind], turnName(row), STATUS_LABELS[row.status], "Open details"].filter(Boolean).join(", "));
+    node.setAttribute("aria-label", [`Message ${(row.newIndex ?? row.oldIndex ?? 0) + 1}`, depth?.long ?? "", KIND_LABELS[row.kind], turnName(row), STATUS_LABELS[row.status], "Open details"].filter(Boolean).join(", "));
     list.append(node); nodes.push(node);
     if (isProblem(row)) problems.push(node);
   }

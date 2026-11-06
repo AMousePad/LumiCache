@@ -81,12 +81,14 @@ export function buildTimeline(before: Snapshot | null, beforeOutline: OutlineTur
   const rows: TimelineRow[] = [];
   const row = (status: TimelineRow["status"], oldIndex: number | undefined, newIndex: number | undefined, root: boolean, sources: string[], headerChanged = false) => {
     const turn = (newIndex !== undefined ? afterOutline[newIndex] : beforeOutline?.[oldIndex!])!, total = Math.max(1, turn.characters);
-    const depth = newIndex !== undefined ? after.messages[newIndex]?.depth : before?.messages[oldIndex!]?.depth;
+    // The tail is measured on the previous prompt, so rows it had keep that depth. Added rows say where they land next.
+    const depth = before ? oldIndex !== undefined ? before.messages[oldIndex]?.depth : undefined : after.messages[newIndex!]?.depth;
+    const nextDepth = before && oldIndex === undefined ? after.messages[newIndex!]?.depth : undefined;
     // A changed message is named for the part that changed, not its largest part.
     const names = [...new Set(sources)], culprit = status === "changed" ? turn.parts.find(part => part.label === names[0]) : undefined;
     const kind = culprit?.kind ?? turn.kind, label = culprit ? `${culprit.label}${names.length > 1 ? ` +${names.length - 1}` : ""}` : turn.label;
     rows.push({ ...(oldIndex !== undefined ? { oldIndex } : {}), ...(newIndex !== undefined ? { newIndex } : {}), status, ...(root ? { root } : {}), role: turn.role, kind, label, preview: turn.preview,
-      characters: turn.characters, injected: turn.injected, ...(turn.chatIndex !== undefined ? { chatIndex: turn.chatIndex } : {}), ...(depth !== undefined ? { depth } : {}), headerChanged,
+      characters: turn.characters, injected: turn.injected, ...(turn.chatIndex !== undefined ? { chatIndex: turn.chatIndex } : {}), ...(depth !== undefined ? { depth } : {}), ...(nextDepth !== undefined ? { nextDepth } : {}), headerChanged,
       parts: turn.parts.map(part => ({ kind: part.kind, label: part.label, share: (part.end - part.start) / total })), sources: [...new Set(sources)] });
   };
   if (!before) afterOutline.forEach((turn, index) => row("base", undefined, index, false, turn.parts.map(part => part.label)));

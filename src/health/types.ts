@@ -37,7 +37,9 @@ export interface OutlineTurn { role: string; kind: TurnKind; label: string; prev
 export type TurnStatus = "base" | "kept" | "new" | "rewritten" | "changed" | "added" | "removed";
 export interface TimelineRow {
   oldIndex?: number; newIndex?: number; status: TurnStatus; root?: boolean; role: string; kind: TurnKind; label: string; preview: string;
-  characters: number; injected: boolean; chatIndex?: number; depth?: number; headerChanged: boolean; parts: { kind: TurnKind; label: string; share: number }[]; sources: string[];
+  characters: number; injected: boolean; chatIndex?: number;
+  /** depth: in the previous prompt, which the tail is measured on. nextDepth: where an added row lands. */
+  depth?: number; nextDepth?: number; headerChanged: boolean; parts: { kind: TurnKind; label: string; share: number }[]; sources: string[];
 }
 export interface StepTimeline { rows: TimelineRow[]; kept: number; rewritten: number; added: number; problems: number; tolerated: boolean; routeChanged: boolean }
 export interface CacheUsage { read?: number; write?: number; model: string; messageId: string }

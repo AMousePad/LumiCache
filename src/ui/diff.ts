@@ -110,7 +110,7 @@ function renderMessages(before: Snapshot | undefined, after: Snapshot, client: C
   }
   function message(change: MessageChange, open: boolean) {
     const details = el("details", "lc-change"), body = el("div", "lc-message-diff");
-    const identity = `message ${(change.newIndex ?? change.oldIndex ?? 0) + 1}${change.depth !== undefined ? ` · depth ${change.depth}` : ""}`;
+    const identity = `message ${(change.newIndex ?? change.oldIndex ?? 0) + 1}${change.depth !== undefined ? ` · depth ${change.depth}` : change.nextDepth !== undefined ? ` · next depth ${change.nextDepth}` : ""}`;
     details.append(el("summary", "", `${change.role[0].toUpperCase() + change.role.slice(1)} · ${identity}${before && change.kind === "added" ? " · added" : before && change.kind === "removed" ? " · removed" : ""}`), body);
     let rendered = false, request = 0;
     const show = () => {

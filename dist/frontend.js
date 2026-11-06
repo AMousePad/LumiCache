@@ -446,7 +446,7 @@ function renderMessages(before, after, client, firstMessage) {
   }
   function message(change, open) {
     const details = el("details", "lc-change"), body = el("div", "lc-message-diff");
-    const identity = `message ${(change.newIndex ?? change.oldIndex ?? 0) + 1}${change.depth !== undefined ? ` · depth ${change.depth}` : ""}`;
+    const identity = `message ${(change.newIndex ?? change.oldIndex ?? 0) + 1}${change.depth !== undefined ? ` · depth ${change.depth}` : change.nextDepth !== undefined ? ` · next depth ${change.nextDepth}` : ""}`;
     details.append(el("summary", "", `${change.role[0].toUpperCase() + change.role.slice(1)} · ${identity}${before && change.kind === "added" ? " · added" : before && change.kind === "removed" ? " · removed" : ""}`), body);
     let rendered = false, request = 0;
     const show = () => {
@@ -880,7 +880,7 @@ details[open] > summary > .lc-chevron { transform:rotate(90deg); }
 .lc-tl-list::-webkit-scrollbar { display:none; }
 .lc-tl-break { flex:none; margin:6px 0 3px; padding:6px 8px; border-radius:7px; font-size:11px; font-weight:600; color:var(--lc-bad); background:color-mix(in srgb,var(--lc-bad) 12%,transparent); }
 .lc-tl-tolerated .lc-tl-break { color:var(--lc-warn); background:color-mix(in srgb,var(--lc-warn) 12%,transparent); }
-.lc-turn { flex:none; display:flex; align-items:stretch; justify-content:flex-start; gap:8px; width:100%; padding:0 8px 0 0; border-radius:8px; text-align:left; overflow:hidden; background:color-mix(in srgb,var(--lc-panel) 60%,var(--lc-bg)); }
+.lc-turn { flex:none; display:flex; align-items:stretch; justify-content:flex-start; gap:8px; width:100%; min-height:56px; padding:0 8px 0 0; border-radius:8px; text-align:left; overflow:hidden; background:color-mix(in srgb,var(--lc-panel) 60%,var(--lc-bg)); }
 .lc-turn-stripe { flex:none; width:6px; display:flex; flex-direction:column; }
 .lc-turn-stripe > i { flex:1 1 0; min-height:2px; background:var(--k); }
 .lc-turn-copy { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; gap:1px; padding:5px 0; }
@@ -944,8 +944,8 @@ var tokens = (characters) => {
   return `~${value >= 1000 ? `${(value / 1000).toFixed(value >= 1e4 ? 0 : 1)}k` : value} tok`;
 };
 var turnName = (row) => row.kind === "story" && row.chatIndex !== undefined ? `Turn ${row.chatIndex + 1} · ${row.label}` : row.label;
-var rowHeight = (characters) => Math.round(46 + Math.min(34, Math.max(0, Math.log10(Math.max(1, characters)) - 2) * 12));
 var breakText = (tolerated) => tolerated ? "Change starts here, inside your allowed tail." : "Cache breaks here. Because this is outside your tail, your entire context is at risk of cache invalidation.";
+var depthText = (row) => row.depth !== undefined ? { short: `d${row.depth}`, long: `Depth ${row.depth} in the previous prompt` } : row.nextDepth !== undefined ? { short: `next d${row.nextDepth}`, long: `Depth ${row.nextDepth} once sent` } : undefined;
 function renderTimeline(data, open) {
   const root = el("div", `lc-tl${data.tolerated ? " lc-tl-tolerated" : ""}`), head = el("div", "lc-tl-head"), legend = el("div", "lc-tl-legend");
   const body = el("div", "lc-tl-body"), rail = el("div", "lc-rail"), list = el("div", "lc-tl-list"), thumb = el("div", "lc-rail-thumb");
@@ -971,7 +971,6 @@ function renderTimeline(data, open) {
     const node = button("", () => open(row), "lc-turn");
     node.dataset.status = row.status;
     node.dataset.kind = row.kind;
-    node.style.minHeight = `${rowHeight(row.characters)}px`;
     const stripe = el("span", "lc-turn-stripe");
     for (const part of row.parts.length ? row.parts : [{ kind: row.kind, share: 1, label: row.label }]) {
       const piece = el("i");
@@ -985,14 +984,15 @@ function renderTimeline(data, open) {
     const meta = el("span", "lc-turn-meta");
     if (STATUS_LABELS[row.status])
       meta.append(el("span", "lc-turn-status", STATUS_LABELS[row.status]));
-    if (row.depth !== undefined) {
-      const depth = el("span", "lc-turn-depth", `d${row.depth}`);
-      depth.title = `Depth ${row.depth}`;
-      meta.append(depth);
+    const depth = depthText(row);
+    if (depth) {
+      const tag = el("span", "lc-turn-depth", depth.short);
+      tag.title = depth.long;
+      meta.append(tag);
     }
     meta.append(el("span", "lc-turn-size", tokens(row.characters)));
     node.append(stripe, copy, meta);
-    node.setAttribute("aria-label", [`Message ${(row.newIndex ?? row.oldIndex ?? 0) + 1}`, row.depth !== undefined ? `depth ${row.depth}` : "", KIND_LABELS[row.kind], turnName(row), STATUS_LABELS[row.status], "Open details"].filter(Boolean).join(", "));
+    node.setAttribute("aria-label", [`Message ${(row.newIndex ?? row.oldIndex ?? 0) + 1}`, depth?.long ?? "", KIND_LABELS[row.kind], turnName(row), STATUS_LABELS[row.status], "Open details"].filter(Boolean).join(", "));
     list.append(node);
     nodes.push(node);
     if (isProblem(row))

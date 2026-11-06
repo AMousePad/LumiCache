@@ -232,7 +232,7 @@ details[open] > summary > .lc-chevron { transform:rotate(90deg); }
 .lc-tl-list::-webkit-scrollbar { display:none; }
 .lc-tl-break { flex:none; margin:6px 0 3px; padding:6px 8px; border-radius:7px; font-size:11px; font-weight:600; color:var(--lc-bad); background:color-mix(in srgb,var(--lc-bad) 12%,transparent); }
 .lc-tl-tolerated .lc-tl-break { color:var(--lc-warn); background:color-mix(in srgb,var(--lc-warn) 12%,transparent); }
-.lc-turn { flex:none; display:flex; align-items:stretch; justify-content:flex-start; gap:8px; width:100%; padding:0 8px 0 0; border-radius:8px; text-align:left; overflow:hidden; background:color-mix(in srgb,var(--lc-panel) 60%,var(--lc-bg)); }
+.lc-turn { flex:none; display:flex; align-items:stretch; justify-content:flex-start; gap:8px; width:100%; min-height:56px; padding:0 8px 0 0; border-radius:8px; text-align:left; overflow:hidden; background:color-mix(in srgb,var(--lc-panel) 60%,var(--lc-bg)); }
 .lc-turn-stripe { flex:none; width:6px; display:flex; flex-direction:column; }
 .lc-turn-stripe > i { flex:1 1 0; min-height:2px; background:var(--k); }
 .lc-turn-copy { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; gap:1px; padding:5px 0; }

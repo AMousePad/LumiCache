@@ -2242,7 +2242,7 @@ class PromptStore {
         const same = !!old && !!next && old.header === next.header && old.body === next.body;
         if (same)
           unchanged++;
-        const depth = next ? next.depth : old?.depth;
+        const depth = before ? old?.depth : next?.depth, nextDepth = before && !old ? next?.depth : undefined;
         if (!same || input.includeUnchanged)
           items.push({
             oldIndex,
@@ -2250,7 +2250,8 @@ class PromptStore {
             role: next?.role ?? old.role,
             kind: same ? "unchanged" : !old ? "added" : !next ? "removed" : "changed",
             headerChanged: !!old && !!next && old.header !== next.header,
-            ...depth !== undefined ? { depth } : {}
+            ...depth !== undefined ? { depth } : {},
+            ...nextDepth !== undefined ? { nextDepth } : {}
           });
       };
       for (const [oldIndex, newIndex] of alignment.pairs)
@@ -2413,7 +2414,8 @@ function buildTimeline(before, beforeOutline, after, afterOutline, comparison, t
   const rows = [];
   const row = (status, oldIndex, newIndex, root, sources, headerChanged = false) => {
     const turn = newIndex !== undefined ? afterOutline[newIndex] : beforeOutline?.[oldIndex], total = Math.max(1, turn.characters);
-    const depth = newIndex !== undefined ? after.messages[newIndex]?.depth : before?.messages[oldIndex]?.depth;
+    const depth = before ? oldIndex !== undefined ? before.messages[oldIndex]?.depth : undefined : after.messages[newIndex]?.depth;
+    const nextDepth = before && oldIndex === undefined ? after.messages[newIndex]?.depth : undefined;
     const names = [...new Set(sources)], culprit = status === "changed" ? turn.parts.find((part) => part.label === names[0]) : undefined;
     const kind = culprit?.kind ?? turn.kind, label = culprit ? `${culprit.label}${names.length > 1 ? ` +${names.length - 1}` : ""}` : turn.label;
     rows.push({
@@ -2429,6 +2431,7 @@ function buildTimeline(before, beforeOutline, after, afterOutline, comparison, t
       injected: turn.injected,
       ...turn.chatIndex !== undefined ? { chatIndex: turn.chatIndex } : {},
       ...depth !== undefined ? { depth } : {},
+      ...nextDepth !== undefined ? { nextDepth } : {},
       headerChanged,
       parts: turn.parts.map((part) => ({ kind: part.kind, label: part.label, share: (part.end - part.start) / total })),
       sources: [...new Set(sources)]
