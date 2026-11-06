@@ -71,6 +71,13 @@ test("saved message macros are checked while hidden, clipped and literal message
   expect(findings).toHaveLength(1); expect(findings[0]).toMatchObject({ category: "History", itemId: "active", level: "issue" });
   const clipped = preview(); clipped.contextClipStats!.messagesDropped = 1;
   expect(analyze(data, clipped).findings.some(f => f.category === "History")).toBe(false);
+  // A hidden message's variable write never runs, so it can't make a check on that variable change.
+  data.preset!.prompt_order[0].content = "{{getvar::mood}}";
+  const writer = { id: "old", index_in_chat: 1, content: "{{setvar::mood::{{roll::2d6}}}}", name: "You", extra: { hidden: true } };
+  data.messages = [writer] as never;
+  expect(analyze(data, preview()).findings.some(f => f.category === "Preset")).toBe(false);
+  writer.extra.hidden = false;
+  expect(analyze(data, preview()).findings.some(f => f.category === "Preset")).toBe(true);
   const content = "{{roll::2d6}}", key = createHash("sha256").update(content).digest("hex");
   expect(volatileMacros(historyTemplate({ content, extra: { macro_literal_braces: { [key]: [0, 1, 11, 12] } } }))).toEqual([]);
   expect(volatileMacros(historyTemplate({ content: '<json>{"tag":"</json>","roll":"{{roll::2d6}}"}</json>', extra: {} }))).toEqual([]);

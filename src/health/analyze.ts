@@ -1,4 +1,4 @@
-import type { ContextClipStatsDTO, DryRunResultDTO, PromptBlockSnapshotDTO, SavedBreakdownDTO } from "lumiverse-spindle-types";
+import type { ChatMessageDTO, ContextClipStatsDTO, DryRunResultDTO, PromptBlockSnapshotDTO, SavedBreakdownDTO } from "lumiverse-spindle-types";
 import type { Sources } from "./sources";
 import type { CacheUsage, Finding, HealthReport } from "./types";
 
@@ -69,7 +69,7 @@ function presetSettings(sources: Sources): Record<string, string> {
  * Variables cross sources, so a check in one can inherit a write in another.
  * A write is changing if its value moves, if the branch around it moves, or if the text only runs sometimes.
  */
-function variableWrites(sources: Sources, blocks: ReturnType<typeof effectiveBlocks>, options: MacroOptions) {
+function variableWrites(sources: Sources, blocks: ReturnType<typeof effectiveBlocks>, options: MacroOptions, history: ChatMessageDTO[]) {
   const texts: { text: string; source: string; firm: boolean; gated?: string }[] = [];
   for (const block of blocks) if (!STRUCTURAL.has(block.marker ?? "")) texts.push({ text: block.content, source: `preset block "${block.name}"`, firm: true, gated: block.injectionTrigger?.length ? "for some generation types" : undefined });
   // Blocks left out of a normal send still run on the generation types they name.
@@ -78,7 +78,8 @@ function variableWrites(sources: Sources, blocks: ReturnType<typeof effectiveBlo
   for (const script of sources.regex) for (const [, text] of regexMacroFields(script, !!sources.preset)) texts.push({ text, source: `regex "${script.name}"`, firm: false, gated: "when it matches" });
   if (sources.character) for (const key of ["description", "personality", "scenario", "system_prompt", "post_history_instructions"] as const) texts.push({ text: String(sources.character[key] ?? ""), source: `character ${key}`, firm: false });
   if (sources.persona) texts.push({ text: sources.persona.description, source: "persona", firm: false });
-  for (const message of sources.messages ?? []) texts.push({ text: historyTemplate(message), source: `message ${(message.index_in_chat ?? 0) + 1}`, firm: false });
+  // Hidden or clipped messages never run their macros, so only the included history can write.
+  for (const message of history) texts.push({ text: historyTemplate(message), source: `message ${(message.index_in_chat ?? 0) + 1}`, firm: false });
   const writing = texts.filter(item => item.text?.includes("{{") && WRITES.test(item.text));
   const changing: Record<string, ChangingVariable> = {}, writers: Record<string, string[]> = {}, written: Record<string, string[]> = {};
   const name = (id: string) => id.slice(id.indexOf(":") + 1);
@@ -122,7 +123,9 @@ export function analyze(sources: Sources, preview: DryRunResultDTO, usage?: Cach
   if (sources.persona) references.persona = references.userpersona = sources.persona.description;
   const expanded: MacroOptions = { ...options, references };
   options.settings = expanded.settings = presetSettings(sources);
-  Object.assign(options, variableWrites(sources, blocks, { ...expanded, onCall: undefined }));
+  const historyActive = !sources.preset || blocks.some(block => block.marker === "chat_history");
+  const history = includedHistory(historyActive ? sources.messages ?? [] : [], sources.chat.metadata, preview.contextClipStats);
+  Object.assign(options, variableWrites(sources, blocks, { ...expanded, onCall: undefined }, history));
   expanded.changing = options.changing; expanded.writers = options.writers; expanded.written = options.written;
   for (const block of blocks) {
     const source = `Preset: ${sources.preset!.name} / ${block.name}`;
@@ -159,8 +162,7 @@ export function analyze(sources: Sources, preview: DryRunResultDTO, usage?: Cach
     if (direct || reached.length) findings.push(...scanText(sources.persona.description, `Persona: ${sources.persona.name}`, "persona", expanded).map(finding => ({ ...finding,
       level: !direct && finding.level !== "variabled" && reached.every(call => call.level === "risk") ? "risk" as const : finding.level, category: "Persona" as const, group: sources.persona!.name, item: "Description" })));
   }
-  const historyActive = !sources.preset || blocks.some(block => block.marker === "chat_history");
-  for (const [index, message] of includedHistory(historyActive ? sources.messages ?? [] : [], sources.chat.metadata, preview.contextClipStats).entries()) {
+  for (const [index, message] of history.entries()) {
     if (!message.content.includes("{{")) continue;
     const item = `Message ${(message.index_in_chat ?? index) + 1} · ${message.name || (message.is_user ? "You" : "Assistant")}`;
     try { findings.push(...scanText(historyTemplate(message), `History: ${item}`, `message-${message.id}`, expanded).map(finding => ({ ...finding, category: "History" as const, item, itemId: message.id }))); }

@@ -63,6 +63,6 @@ export async function collectSources(api: SpindleAPI, user: string, input: Audit
     }
   }
   const [regex, messages] = await Promise.all([api.regex_scripts.getActive({ target: "prompt", characterId: character?.id, chatId: chat.id, userId: user }), api.chat.getMessages(chat.id)]);
-  for (const message of messages) { sourceCharacters += message.content.length; if (sourceCharacters > 32_000_000) throw new Error("The audit sources and history exceed 32 million characters."); }
+  // No size cap on history: long chats are normal, and the audit only scans the part that reaches the prompt, which the context limit bounds.
   return { input: { ...input, connectionId: connection.id }, chat, character, persona: effectivePersona, preset, active, connection, lore, regex, notes, messages };
 }

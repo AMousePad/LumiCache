@@ -1107,7 +1107,7 @@ function presetSettings(sources) {
     }
   return settings;
 }
-function variableWrites(sources, blocks, options) {
+function variableWrites(sources, blocks, options, history) {
   const texts = [];
   for (const block of blocks)
     if (!STRUCTURAL.has(block.marker ?? ""))
@@ -1125,7 +1125,7 @@ function variableWrites(sources, blocks, options) {
       texts.push({ text: String(sources.character[key] ?? ""), source: `character ${key}`, firm: false });
   if (sources.persona)
     texts.push({ text: sources.persona.description, source: "persona", firm: false });
-  for (const message of sources.messages ?? [])
+  for (const message of history)
     texts.push({ text: historyTemplate(message), source: `message ${(message.index_in_chat ?? 0) + 1}`, firm: false });
   const writing = texts.filter((item) => item.text?.includes("{{") && WRITES.test(item.text));
   const changing = {}, writers = {}, written = {};
@@ -1191,7 +1191,9 @@ function analyze(sources, preview, usage) {
     references.persona = references.userpersona = sources.persona.description;
   const expanded = { ...options, references };
   options.settings = expanded.settings = presetSettings(sources);
-  Object.assign(options, variableWrites(sources, blocks, { ...expanded, onCall: undefined }));
+  const historyActive = !sources.preset || blocks.some((block) => block.marker === "chat_history");
+  const history = includedHistory(historyActive ? sources.messages ?? [] : [], sources.chat.metadata, preview.contextClipStats);
+  Object.assign(options, variableWrites(sources, blocks, { ...expanded, onCall: undefined }, history));
   expanded.changing = options.changing;
   expanded.writers = options.writers;
   expanded.written = options.written;
@@ -1269,8 +1271,7 @@ function analyze(sources, preview, usage) {
         item: "Description"
       })));
   }
-  const historyActive = !sources.preset || blocks.some((block) => block.marker === "chat_history");
-  for (const [index, message] of includedHistory(historyActive ? sources.messages ?? [] : [], sources.chat.metadata, preview.contextClipStats).entries()) {
+  for (const [index, message] of history.entries()) {
     if (!message.content.includes("{{"))
       continue;
     const item = `Message ${(message.index_in_chat ?? index) + 1} \xB7 ${message.name || (message.is_user ? "You" : "Assistant")}`;
@@ -3391,11 +3392,6 @@ async function collectSources(api, user, input) {
       }
   }
   const [regex, messages] = await Promise.all([api.regex_scripts.getActive({ target: "prompt", characterId: character?.id, chatId: chat.id, userId: user }), api.chat.getMessages(chat.id)]);
-  for (const message of messages) {
-    sourceCharacters += message.content.length;
-    if (sourceCharacters > 32000000)
-      throw new Error("The audit sources and history exceed 32 million characters.");
-  }
   return { input: { ...input, connectionId: connection.id }, chat, character, persona: effectivePersona, preset, active, connection, lore, regex, notes, messages };
 }
 
