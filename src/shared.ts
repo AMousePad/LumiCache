@@ -30,7 +30,8 @@ export interface InspectionContext {
 export const DEFAULT_ACCEPTABLE_DEPTH = 2;
 export const DEFAULT_SETTINGS: Required<Settings> = { mode: "warn", acceptableDepth: null, acceptableTokens: null,
   forceConsistency: false, overflowPlacement: "end", refreshEnabled: true, refreshEvery: 20, autoRefreshEnabled: false, autoRefreshMinutes: 10, autoRefreshLimit: 3, cacheTtl: true, hiddenCategories: [] };
-export interface PromptMessage { role: string; header: string; body: string }
+/** depth: Lumiverse's depth, the chat messages after this one. Absent before the first chat message. */
+export interface PromptMessage { role: string; header: string; body: string; depth?: number }
 export interface Snapshot {
   /** Frontend views carry a session-bound reference instead of message bodies. */
   reference?: string;

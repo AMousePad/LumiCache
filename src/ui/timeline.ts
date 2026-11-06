@@ -33,9 +33,11 @@ export function renderTimeline(data: StepTimeline, open: (row: TimelineRow) => v
     copy.append(title, el("span", "lc-turn-preview", row.preview));
     const meta = el("span", "lc-turn-meta");
     if (STATUS_LABELS[row.status]) meta.append(el("span", "lc-turn-status", STATUS_LABELS[row.status]));
+    // Same column as the size, so rows stay the same height and width on narrow screens.
+    if (row.depth !== undefined) { const depth = el("span", "lc-turn-depth", `d${row.depth}`); depth.title = `Depth ${row.depth}`; meta.append(depth); }
     meta.append(el("span", "lc-turn-size", tokens(row.characters)));
     node.append(stripe, copy, meta);
-    node.setAttribute("aria-label", [`Message ${(row.newIndex ?? row.oldIndex ?? 0) + 1}`, KIND_LABELS[row.kind], turnName(row), STATUS_LABELS[row.status], "Open details"].filter(Boolean).join(", "));
+    node.setAttribute("aria-label", [`Message ${(row.newIndex ?? row.oldIndex ?? 0) + 1}`, row.depth !== undefined ? `depth ${row.depth}` : "", KIND_LABELS[row.kind], turnName(row), STATUS_LABELS[row.status], "Open details"].filter(Boolean).join(", "));
     list.append(node); nodes.push(node);
     if (isProblem(row)) problems.push(node);
   }

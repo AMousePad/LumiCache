@@ -446,7 +446,7 @@ function renderMessages(before, after, client, firstMessage) {
   }
   function message(change, open) {
     const details = el("details", "lc-change"), body = el("div", "lc-message-diff");
-    const identity = `message ${(change.newIndex ?? change.oldIndex ?? 0) + 1}`;
+    const identity = `message ${(change.newIndex ?? change.oldIndex ?? 0) + 1}${change.depth !== undefined ? ` · depth ${change.depth}` : ""}`;
     details.append(el("summary", "", `${change.role[0].toUpperCase() + change.role.slice(1)} · ${identity}${before && change.kind === "added" ? " · added" : before && change.kind === "removed" ? " · removed" : ""}`), body);
     let rendered = false, request = 0;
     const show = () => {
@@ -890,6 +890,7 @@ details[open] > summary > .lc-chevron { transform:rotate(90deg); }
 .lc-turn-preview { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:10px; color:var(--lc-muted); }
 .lc-turn-meta { flex:none; display:flex; flex-direction:column; align-items:flex-end; justify-content:center; gap:2px; font-size:10px; color:var(--lc-muted); }
 .lc-turn-status { font-weight:600; }
+.lc-turn-depth { font-variant-numeric:tabular-nums; opacity:.8; }
 .lc-turn[data-status=rewritten] { opacity:.62; }
 .lc-turn[data-status=new] .lc-turn-status { color:var(--lc-accent); }
 .lc-turn:is([data-status=changed],[data-status=added],[data-status=removed]) { border-color:var(--lc-bad); background:color-mix(in srgb,var(--lc-bad) 11%,var(--lc-panel)); }
@@ -984,9 +985,14 @@ function renderTimeline(data, open) {
     const meta = el("span", "lc-turn-meta");
     if (STATUS_LABELS[row.status])
       meta.append(el("span", "lc-turn-status", STATUS_LABELS[row.status]));
+    if (row.depth !== undefined) {
+      const depth = el("span", "lc-turn-depth", `d${row.depth}`);
+      depth.title = `Depth ${row.depth}`;
+      meta.append(depth);
+    }
     meta.append(el("span", "lc-turn-size", tokens(row.characters)));
     node.append(stripe, copy, meta);
-    node.setAttribute("aria-label", [`Message ${(row.newIndex ?? row.oldIndex ?? 0) + 1}`, KIND_LABELS[row.kind], turnName(row), STATUS_LABELS[row.status], "Open details"].filter(Boolean).join(", "));
+    node.setAttribute("aria-label", [`Message ${(row.newIndex ?? row.oldIndex ?? 0) + 1}`, row.depth !== undefined ? `depth ${row.depth}` : "", KIND_LABELS[row.kind], turnName(row), STATUS_LABELS[row.status], "Open details"].filter(Boolean).join(", "));
     list.append(node);
     nodes.push(node);
     if (isProblem(row))

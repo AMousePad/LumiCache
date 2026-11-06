@@ -30,7 +30,7 @@ describe("routes", () => {
     expect(ttlParameters({ provider: "deepseek", model: "deepseek-chat" }, settings())).toBeUndefined();
   });
   test("Vertex Gemini is a known Gemini cache, and other Vertex models are unknown", () => {
-    expect(ttlRoute({ provider: "google_vertex", model: "gemini-4-argon" })).toEqual({ kind: "fixed", name: "Google Vertex", lifetime: "about 15–20 minutes for Gemini 4 Argon, from one unofficial report" });
+    expect(ttlRoute({ provider: "google_vertex", model: "gemini-4-argon" })).toEqual({ kind: "fixed", name: "Google Vertex", lifetime: "about 15–20 minutes for Gemini 4 Argon" });
     expect(kind("google_vertex", "publishers/google/models/gemini-2.5-pro")).toBe("fixed");
     expect(kind("google_vertex", "claude-opus-4")).toBe("unknown");
     expect(kind("google_vertex", "meta/llama-4")).toBe("unknown");

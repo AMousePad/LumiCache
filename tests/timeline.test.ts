@@ -120,6 +120,9 @@ test("the timeline shows every message, puts problems on its rail and opens the 
   expect(view.root.querySelector('.lc-rail')!.getAttribute("role")).toBe("scrollbar");
   expect(view.root.querySelector(".lc-tl-legend")!.textContent).toContain("World info");
   turns[1].click(); expect(opened).toEqual([1]);
+  // Lumiverse depth: chat messages after the row, so the injection before the last message is depth 1, like its own setting.
+  expect(turns.map(turn => turn.querySelector(".lc-turn-depth")?.textContent ?? null)).toEqual([null, null, "d1", "d1", "d0"]);
+  expect(turns[3].getAttribute("aria-label")).toContain("depth 1");
   const tolerated = renderTimeline({ ...data, tolerated: true }, () => {});
   expect(tolerated.root.querySelector(".lc-tl-break")!.textContent).toContain("allowed tail"); view.dispose(); tolerated.dispose();
 });

@@ -53,6 +53,12 @@ describe("prompt prefix comparison", () => {
     expect(compare(snapshot([{ role: "user", content: "[]" }], ctx), snapshot([{ role: "user", content: [] }], ctx)).kind).toBe("break");
     expect(compare(snapshot([{ role: "user", content: "abc" }, { role: "user", content: "d" }], ctx), snapshot([{ role: "user", content: "abcd" }], ctx)).kind).toBe("break");
   });
+  test("depth counts the chat messages after each message from the first chat message on, as Lumiverse does", () => {
+    const chat = (content: string, flag: "__isChatHistory" | "__chatHistorySource" = "__isChatHistory") => ({ role: "user" as const, content, [flag]: true });
+    const depths = (m: Parameters<typeof snapshot>[0]) => snapshot(m, context()).messages.map(x => x.depth);
+    expect(depths([{ role: "system", content: "Prefix" }, chat("a"), { role: "system", content: "Note" }, chat("b", "__chatHistorySource"), { role: "system", content: "End" }])).toEqual([undefined, 1, 1, 0, 0]);
+    expect(depths(messages())).toEqual([undefined, undefined]);
+  });
   test("prompt limits reject rather than compare truncated text", () => {
     expect(() => snapshot(messages("x".repeat(MAX_PROMPT_CHARACTERS)), context())).toThrow("larger than");
   });

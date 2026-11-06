@@ -3,7 +3,7 @@ import { diffArrays } from "diff";
 import { DiffPlan, type DiffPage } from "./diff-engine";
 import type { Snapshot } from "./shared";
 
-export interface MessageChange { oldIndex?: number; newIndex?: number; role: string; kind: "added" | "removed" | "changed" | "unchanged"; headerChanged: boolean }
+export interface MessageChange { oldIndex?: number; newIndex?: number; role: string; kind: "added" | "removed" | "changed" | "unchanged"; headerChanged: boolean; depth?: number }
 export interface MessagePage { items: MessageChange[]; total: number; unchanged: number; cursor: number; next?: number; previous?: number; note?: string }
 export interface DiffInput { before?: string; after: string; oldIndex?: number; newIndex?: number; part?: "body" | "header" }
 interface Stored { user: string; session: string; snapshot: Snapshot; size: number; touched: number }
@@ -86,8 +86,9 @@ export class PromptStore {
         const old = oldIndex === undefined ? undefined : a[oldIndex], next = newIndex === undefined ? undefined : b[newIndex];
         const same = !!old && !!next && old.header === next.header && old.body === next.body;
         if (same) unchanged++;
+        const depth = next ? next.depth : old?.depth;
         if (!same || input.includeUnchanged) items.push({ oldIndex, newIndex, role: next?.role ?? old!.role,
-          kind: same ? "unchanged" : !old ? "added" : !next ? "removed" : "changed", headerChanged: !!old && !!next && old.header !== next.header });
+          kind: same ? "unchanged" : !old ? "added" : !next ? "removed" : "changed", headerChanged: !!old && !!next && old.header !== next.header, ...(depth !== undefined ? { depth } : {}) });
       };
       for (const [oldIndex, newIndex] of alignment.pairs) add(oldIndex, newIndex);
       list = { items, unchanged, ...(!alignment.aligned ? { note: "Message alignment reached its work limit; messages are compared by position." } : {}) }; this.lists.set(key, list);

@@ -46,12 +46,6 @@ function keyed(messages: LlmMessageDTO[]) {
     return { key: `${id}:${n}`, message };
   });
 }
-export function historyUnchanged(before: LlmMessageDTO[], after: LlmMessageDTO[]) {
-  try {
-    const a = keyed(before), b = new Map(keyed(after).map(x => [x.key, x.message]));
-    return a.length > 0 && a.every(x => b.has(x.key) && wire(x.message) === wire(b.get(x.key)!));
-  } catch { return false; }
-}
 /** An edit, swipe or rewind breaks the cache there anyway, so only older messages stay frozen. */
 function followChat(before: LlmMessageDTO[], now: ReturnType<typeof keyed>, released: ReadonlySet<string>) {
   const newest = now.at(-1);

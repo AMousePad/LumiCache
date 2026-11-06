@@ -44,6 +44,13 @@ export function snapshot(messages: LlmMessageDTO[], context: InspectionContext):
     if (size > MAX_PROMPT_CHARACTERS) throw new Error("LumiCache cannot inspect prompts larger than 32 million characters. Turn monitoring off in LumiCache to send this request.");
     normalized.push({ role: message.role, header, body });
   }
+  // Lumiverse's depth: how many chat messages follow. The leading prefix sits above all history, so it has none.
+  const history = (m: LlmMessageDTO) => m.__isChatHistory === true || (m as { __chatHistorySource?: boolean }).__chatHistorySource === true;
+  const first = messages.findIndex(history);
+  for (let index = messages.length - 1, depth = 0; first >= 0 && index >= first; index--) {
+    normalized[index].depth = depth;
+    if (history(messages[index])) depth++;
+  }
   return { at: Date.now(), model: route?.model ?? "Unresolved connection", route: stableJson(route ? {
     connectionId: route.connectionId, provider: route.provider, model: route.model, endpointOrigin: route.endpointOrigin,
     revision: route.connectionDispatchRevision,

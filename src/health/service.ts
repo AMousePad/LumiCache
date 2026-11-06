@@ -11,7 +11,7 @@ import { scenarios } from "./scenarios";
 import { historicalCutoffs } from "./copy";
 import { memoryFinding } from "./memory";
 import { buildTimeline, normalizedHistory, promptOutline } from "./timeline";
-import { historyUnchanged, tailStart } from "../consistency";
+import { tailStart } from "../consistency";
 import type { AuditInput, HealthReport, OutlineTurn, SimulationReport, SimulationScenario, SimulationTicket } from "./types";
 
 interface Job { user: string; session: string; sources: Sources; ticket: SimulationTicket; expires: number; running: boolean; cancelled: boolean; timer: ReturnType<typeof setTimeout> }
@@ -47,12 +47,11 @@ export class HealthService {
     report.findings.push(...await memoryFinding(this.api, user));
     return report;
   }
-  /** Mirrors the live guard: a break inside the mutable tail with history intact is accepted. */
+  /** Mirrors the live guard: any break that starts inside the mutable tail is accepted. */
   private async tolerated(user: string, before: LlmMessageDTO[], after: LlmMessageDTO[], comparison: Comparison, context: InspectionContext): Promise<boolean> {
     if (comparison.kind !== "break" || comparison.routeChanged || comparison.firstMessage === null) return false;
     try {
-      const old = before.map(normalizedHistory), next = after.map(normalizedHistory);
-      if (!historyUnchanged(old, next)) return false;
+      const old = before.map(normalizedHistory);
       const boundary = await tailStart(old, validateSettings(await this.settings(user)), context, messages => this.api.tokens.countMessages(messages, { model: context.mainDispatch.descriptor?.model, userId: user }));
       return comparison.firstMessage >= boundary.index;
     } catch { return false; }

@@ -45,12 +45,16 @@ describe("cache consistency",()=>{
   expect(output.map(m=>m.content)).toEqual(["Stable","History 1","History 2","History 3","I","History 4"]);
   expect(guard.view("user","chat").check?.policy?.accepted).toBe(true);
  });
- test("monitoring tolerates moving guidance but still pauses edited history",async()=>{
+ test("monitoring tolerates any change inside the tail, edits and deletions included, but pauses older edits",async()=>{
   const guard=new Guard(()=>{}), policy=validateSettings({mode:"pause",acceptableDepth:1});
   await sent(guard,[instruction(),h(1),instruction("I"),h(2)],policy);
   await sent(guard,[instruction(),h(1),h(2),h(3),instruction("I"),h(4)],policy);
   expect(guard.view("user","chat").check?.policy?.action).toBe("tolerated");
-  const c=context(), pending=guard.inspect([instruction(),h(1),h(2),h(3),instruction("I"),h(4,"edit")],c,policy);await flush();
+  await sent(guard,[instruction(),h(1),h(2),h(3),instruction("I"),h(4,"edit")],policy);
+  expect(guard.view("user","chat").check?.policy?.action).toBe("tolerated");
+  await sent(guard,[instruction(),h(1),h(2),h(3)],policy);
+  expect(guard.view("user","chat").check?.policy?.action).toBe("tolerated");
+  const c=context(), pending=guard.inspect([instruction(),h(1),h(2,"edit"),h(3)],c,policy);await flush();
   const check=guard.view("user","chat").check!;expect(check.status).toBe("waiting");guard.decide("user","browser",check.id,false);await expect(pending).rejects.toThrow();
  });
  test("periodic refresh counts successful replies, not failures or dry runs",async()=>{

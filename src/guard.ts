@@ -5,7 +5,7 @@ import type { LlmMessageDTO } from "lumiverse-spindle-types";
 import { compare, snapshot } from "./compare";
 import type { Check, InspectionContext, Settings, Snapshot } from "./shared";
 import { validateSettings } from "./settings";
-import { historyUnchanged, preserve, retain, tailStart, type TokenCounter } from "./consistency";
+import { historyMessage, preserve, retain, tailStart, type TokenCounter } from "./consistency";
 
 interface ChatState { releasedThrough?: number; restored?: boolean; baseline: Snapshot | null; check: Check | null; busy: boolean; retained?: ReturnType<typeof retain>; candidate?: ReturnType<typeof retain>; replies: number; epoch?: string | null; connection?: string; cached?: number }
 /** Providers round their counts and cache on a best-effort basis, so a drop this small says nothing. */
@@ -171,7 +171,8 @@ export class Guard {
       comparison: compare(state.baseline, after), before: state.baseline, after, policy };
     if (context.label) check.comparison.summary = `${context.label}: ${check.comparison.summary}`;
     let tolerated = false;
-    if (check.comparison.kind === "break" && !routeChanged && state.retained && historyUnchanged(state.retained.messages, messages)) {
+    // Everything before the first change is identical, so any change from the tail onward is allowed: edits, swipes and deletions included.
+    if (check.comparison.kind === "break" && !routeChanged && state.retained?.messages.some(historyMessage)) {
       const boundary = await tailStart(state.retained.messages, config, context, this.countTokens);
       tolerated = check.comparison.firstMessage !== null && check.comparison.firstMessage >= boundary.index;
       if (tolerated && !policy) check.policy = { action: "tolerated", restored: 0, relocated: 0, replies: state.replies, approximate: boundary.approximate };

@@ -2242,13 +2242,15 @@ class PromptStore {
         const same = !!old && !!next && old.header === next.header && old.body === next.body;
         if (same)
           unchanged++;
+        const depth = next ? next.depth : old?.depth;
         if (!same || input.includeUnchanged)
           items.push({
             oldIndex,
             newIndex,
             role: next?.role ?? old.role,
             kind: same ? "unchanged" : !old ? "added" : !next ? "removed" : "changed",
-            headerChanged: !!old && !!next && old.header !== next.header
+            headerChanged: !!old && !!next && old.header !== next.header,
+            ...depth !== undefined ? { depth } : {}
           });
       };
       for (const [oldIndex, newIndex] of alignment.pairs)
@@ -2411,6 +2413,7 @@ function buildTimeline(before, beforeOutline, after, afterOutline, comparison, t
   const rows = [];
   const row = (status, oldIndex, newIndex, root, sources, headerChanged = false) => {
     const turn = newIndex !== undefined ? afterOutline[newIndex] : beforeOutline?.[oldIndex], total = Math.max(1, turn.characters);
+    const depth = newIndex !== undefined ? after.messages[newIndex]?.depth : before?.messages[oldIndex]?.depth;
     const names = [...new Set(sources)], culprit = status === "changed" ? turn.parts.find((part) => part.label === names[0]) : undefined;
     const kind = culprit?.kind ?? turn.kind, label = culprit ? `${culprit.label}${names.length > 1 ? ` +${names.length - 1}` : ""}` : turn.label;
     rows.push({
@@ -2425,6 +2428,7 @@ function buildTimeline(before, beforeOutline, after, afterOutline, comparison, t
       characters: turn.characters,
       injected: turn.injected,
       ...turn.chatIndex !== undefined ? { chatIndex: turn.chatIndex } : {},
+      ...depth !== undefined ? { depth } : {},
       headerChanged,
       parts: turn.parts.map((part) => ({ kind: part.kind, label: part.label, share: (part.end - part.start) / total })),
       sources: [...new Set(sources)]
@@ -2520,6 +2524,13 @@ function snapshot(messages, context) {
     if (size > MAX_PROMPT_CHARACTERS)
       throw new Error("LumiCache cannot inspect prompts larger than 32 million characters. Turn monitoring off in LumiCache to send this request.");
     normalized.push({ role: message.role, header, body });
+  }
+  const history = (m) => m.__isChatHistory === true || m.__chatHistorySource === true;
+  const first = messages.findIndex(history);
+  for (let index = messages.length - 1, depth = 0;first >= 0 && index >= first; index--) {
+    normalized[index].depth = depth;
+    if (history(messages[index]))
+      depth++;
   }
   return { at: Date.now(), model: route?.model ?? "Unresolved connection", route: stableJson(route ? {
     connectionId: route.connectionId,
@@ -2709,14 +2720,6 @@ function keyed(messages) {
     occurrences.set(id, n + 1);
     return { key: `${id}:${n}`, message };
   });
-}
-function historyUnchanged(before, after) {
-  try {
-    const a = keyed(before), b = new Map(keyed(after).map((x) => [x.key, x.message]));
-    return a.length > 0 && a.every((x) => b.has(x.key) && wire(x.message) === wire(b.get(x.key)));
-  } catch {
-    return false;
-  }
 }
 function followChat(before, now, released) {
   const newest = now.at(-1);
@@ -3010,7 +3013,7 @@ class Guard {
       if (context.label)
         check.comparison.summary = `${context.label}: ${check.comparison.summary}`;
       let tolerated = false;
-      if (check.comparison.kind === "break" && !routeChanged && state.retained && historyUnchanged(state.retained.messages, messages)) {
+      if (check.comparison.kind === "break" && !routeChanged && state.retained?.messages.some(historyMessage)) {
         const boundary = await tailStart(state.retained.messages, config, context, this.countTokens);
         tolerated = check.comparison.firstMessage !== null && check.comparison.firstMessage >= boundary.index;
         if (tolerated && !policy)
@@ -3199,7 +3202,7 @@ var FIXED2 = {
 };
 function lifetime(provider, model) {
   if (provider === "google")
-    return /argon/i.test(model) ? "about 15\u201320 minutes for Gemini 4 Argon, from one unofficial report" : "about 3\u20135 minutes on average, but it varies";
+    return /argon/i.test(model) ? "about 15\u201320 minutes for Gemini 4 Argon" : "about 3\u20135 minutes on average, but it varies";
   if (provider === "zai")
     return "5\u201330 minutes in one independent test";
   if (provider === "openai")
@@ -3533,9 +3536,7 @@ class HealthService {
     if (comparison.kind !== "break" || comparison.routeChanged || comparison.firstMessage === null)
       return false;
     try {
-      const old = before.map(normalizedHistory), next = after.map(normalizedHistory);
-      if (!historyUnchanged(old, next))
-        return false;
+      const old = before.map(normalizedHistory);
       const boundary = await tailStart(old, validateSettings(await this.settings(user)), context, (messages) => this.api.tokens.countMessages(messages, { model: context.mainDispatch.descriptor?.model, userId: user }));
       return comparison.firstMessage >= boundary.index;
     } catch {
@@ -3850,7 +3851,7 @@ Reset comparison (gear) clears the chat's native and CAT baselines; the next suc
     id: "policy",
     label: "Settings, mutable tail and forced consistency",
     text: `Settings are per user; edit the gear panel then Save settings. Defaults: mode=warn, acceptableDepth=blank (uses 2), acceptableTokens=null, forceConsistency=false, overflowPlacement=end, refreshEnabled=true, refreshEvery=20, autoRefreshEnabled=false, autoRefreshMinutes=10, autoRefreshLimit=3, cacheTtl=true.
-Mutable tail: acceptableDepth counts history messages from the most recent (0 allows none; blank uses the default of 2). History token limit bounds that tail using Lumiverse's possibly approximate tokenizer (blank ignores tokens). Both set limits apply. The tail never includes the leading instruction prefix. Ordinary tail tolerance requires existing history content/identity to remain unchanged. Connection/model/dispatch changes still count as breaks.
+Mutable tail: acceptableDepth counts history messages from the most recent (0 allows none; blank uses the default of 2). History token limit bounds that tail using Lumiverse's possibly approximate tokenizer (blank ignores tokens). Both set limits apply. The tail never includes the leading instruction prefix. Any change starting inside the tail is accepted, including edits, swipes and deletions of tail messages. Connection/model/dispatch changes still count as breaks.
 Force cache consistency restores the previous outgoing protected prefix, instructions/lore and prior history content; newly appended history remains. Fresh out-of-range injections move after the last message (end) or to the allowed boundary (boundary). Edits or swipes that change a message's sent text release it and everything newer; only older messages stay frozen. Frozen guidance may remain in old history. Requires preserved history source IDs and indexes; another extension stripping them can make it fail. Context limits still apply.
 Allow scheduled cache breaks accepts current content after refreshEvery successful replies, then establishes a new baseline on success. It only runs with forced consistency, since a prompt that is not frozen has nothing to release. In LumiBooks Cache Friendly mode, its epoch replaces the timer; route changes still require normal review. Reset comparison applies current content on the next successful send.
 Keep Cache Warm (autoRefreshEnabled) resends the last successful prompt of the chat the user sent in last, with minimal output, every autoRefreshMinutes up to autoRefreshLimit times per reply. Each one is billed. Turn it on or off from the input bar drawer or settings; while it runs, a banner above the input shows a spinner and a Stop button that turns it off. A new reply restarts the count; deleting a message stops the current run, and it stops itself after a cache miss, an error or a model change. It needs monitoring on and cannot repeat native tools.

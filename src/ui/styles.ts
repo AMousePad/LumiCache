@@ -242,6 +242,7 @@ details[open] > summary > .lc-chevron { transform:rotate(90deg); }
 .lc-turn-preview { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:10px; color:var(--lc-muted); }
 .lc-turn-meta { flex:none; display:flex; flex-direction:column; align-items:flex-end; justify-content:center; gap:2px; font-size:10px; color:var(--lc-muted); }
 .lc-turn-status { font-weight:600; }
+.lc-turn-depth { font-variant-numeric:tabular-nums; opacity:.8; }
 .lc-turn[data-status=rewritten] { opacity:.62; }
 .lc-turn[data-status=new] .lc-turn-status { color:var(--lc-accent); }
 .lc-turn:is([data-status=changed],[data-status=added],[data-status=removed]) { border-color:var(--lc-bad); background:color-mix(in srgb,var(--lc-bad) 11%,var(--lc-panel)); }
