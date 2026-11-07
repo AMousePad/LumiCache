@@ -78,7 +78,7 @@ test("past turns are the latest five plus the turn they build from", () => {
 test("disposable imports preserve visible content without copying variable rollback ownership", () => {
   const source = { chat: { id: "source", character_id: "character", metadata: { _swipe_variable_state: { owner: "m" }, chat_variables: { tone: "quiet" }, context_history_anchor_message_id: "m", branched_from: "parent" } },
     messages: [{ id: "m", content: "Hello", name: "User", is_user: true, extra: { variableStateBySwipe: [{ before: {} }], attachments: ["image"] } }] };
-  const original = JSON.stringify(source), ticket = { id: "job", sourceChatId: "source", lastMessageId: "m", branchName: "Simulation" };
+  const original = JSON.stringify(source), ticket = { id: "job", sourceChatId: "source", lastMessageId: "m", branchName: "Simulation", copy: "import" as const };
   const copy = simulationCopy(source, ticket);
   expect(copy.chat.metadata._swipe_variable_state).toBeUndefined(); expect(copy.messages[0].extra.variableStateBySwipe).toBeUndefined();
   expect(copy.chat.metadata.chat_variables).toEqual({ tone: "quiet" }); expect(copy.messages[0].extra.attachments).toEqual(["image"]);
@@ -88,7 +88,7 @@ test("disposable imports preserve visible content without copying variable rollb
 test("audio file references are not duplicated and selected swipe metadata stays aligned", () => {
   const source = { chat: { id: "source", character_id: "character", metadata: {} }, messages: [{ id: "m", content: "selected", name: "User", is_user: true,
     swipes: ["old", "selected"], swipe_id: 1, extra: { attachments: [{ type: "audio", image_id: "owned-audio" }, { type: "image", image_id: "shared-image" }], reasoningBySwipe: ["old reasoning", "selected reasoning"] } }] };
-  const copy = simulationCopy(source, { id: "job", sourceChatId: "source", lastMessageId: "m", branchName: "Copy" });
+  const copy = simulationCopy(source, { id: "job", sourceChatId: "source", lastMessageId: "m", branchName: "Copy", copy: "import" });
   expect(copy.messages[0].extra.attachments).toEqual([{ type: "image", image_id: "shared-image" }]);
   expect(copy.messages[0].swipe_id).toBe(1); expect(copy.chat.metadata.lumicache_omitted_audio).toBe(1);
   expect(source.messages[0].extra.attachments).toHaveLength(2);

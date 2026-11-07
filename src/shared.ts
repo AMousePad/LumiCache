@@ -81,7 +81,7 @@ export interface Operations {
   audit: { input: import("./health/types").AuditInput & { agentJobId?: string }; output: import("./health/types").HealthReport };
   prepareSimulation: { input: import("./health/types").AuditInput & { agentJobId?: string }; output: import("./health/types").SimulationTicket };
   simulate: { input: { id: string; scratchChatId: string }; output: import("./health/types").SimulationReport };
-  cancelSimulation: { input: { id: string }; output: void };
+  cancelSimulation: { input: { id: string; scratchChatId?: string }; output: void };
 }
 export interface Reply { type: "reply"; id: string; value?: unknown; error?: string }
 export const COVERAGE = "Compares assembled prompts before sending. Later host/provider changes, tools, cache expiry and provider cache state are not visible here. This is a cache-risk check, not a confirmed cache hit or miss.";

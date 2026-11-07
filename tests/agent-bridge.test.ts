@@ -87,7 +87,7 @@ test("simulation waits for profile cleanup, propagates errors and exposes bounde
   const f = fixture(); f.bridge.presence("user", "b", { chatId: "chat" });
   const job = await f.start("simulation"), claim = f.bridge.claim("user", "b", job.id);
   f.bridge.authorize("user", "b", job.id, "simulation", claim.input);
-  f.bridge.attach("user", "b", job.id, { id: "ticket", sourceChatId: "chat", lastMessageId: "m", branchName: "test" });
+  f.bridge.attach("user", "b", job.id, { id: "ticket", sourceChatId: "chat", lastMessageId: "m", branchName: "test", copy: "branch" });
   f.bridge.submitted("user", "b", "ticket", "scratch");
   const large = snapshot(messages("cache ".repeat(1_000_000)), context());
   const result: SimulationReport = { sourceChatId: "chat", at: Date.now(), seed: "ticket", complete: true, health: f.report, history: [], limitations: [],
@@ -107,7 +107,7 @@ test("simulation waits for profile cleanup, propagates errors and exposes bounde
 test("browser cancellation is reflected in the agent job after native cleanup", async () => {
   const f = fixture(); f.bridge.presence("user", "b", {});
   const job = await f.start("simulation"); f.bridge.claim("user", "b", job.id);
-  f.bridge.attach("user", "b", job.id, { id: "ticket", sourceChatId: "chat", lastMessageId: "m", branchName: "copy" });
+  f.bridge.attach("user", "b", job.id, { id: "ticket", sourceChatId: "chat", lastMessageId: "m", branchName: "copy", copy: "branch" });
   f.bridge.submitted("user", "b", "ticket", "scratch");
   f.bridge.cancelledTicket("user", "b", "ticket");
   expect((await f.call("job", { jobId: job.id })).phase).toBe("cancelling");

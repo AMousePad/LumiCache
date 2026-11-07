@@ -9,10 +9,10 @@ function fixture() {
   const chats = new Map<string, any>([["source", structuredClone(data.chat)]]);
   const messages = new Map<string, any[]>([["source", ["Hello", "First question", "First reply", "Second question", "Second reply"].map((content, i) => ({ id: `m${i}`, content, name: "Fixture", is_user: i % 2 === 1, extra: {}, index_in_chat: i }))]]);
   let calls = 0, failAt = -1, failCleanup = false, changeRegenerate = false, progressHook = (_completed: number) => {};
-  const mutations: string[] = [], seen: { type: string; last: string }[] = [];
+  const mutations: string[] = [], seen: { type: string; last: string }[] = [], updates: { id: string; patch: any }[] = [];
   const api = {
     chats: { get: async (id: string, user: string) => user === "user" ? structuredClone(chats.get(id) ?? null) : null,
-      update: async (id: string, patch: any) => { mutations.push(id); chats.set(id, { ...chats.get(id), ...structuredClone(patch) }); return structuredClone(chats.get(id)); },
+      update: async (id: string, patch: any) => { mutations.push(id); updates.push({ id, patch: structuredClone(patch) }); chats.set(id, { ...chats.get(id), ...structuredClone(patch) }); return structuredClone(chats.get(id)); },
       delete: async (id: string) => { mutations.push(id); if (failCleanup) throw new Error("Cleanup failed"); return chats.delete(id); } },
     chat: { getMessages: async (id: string) => structuredClone(messages.get(id) ?? []),
       appendMessage: async (id: string, value: any, options: any) => { expect(options.triggerGeneration).toBe(false); mutations.push(id); const message = { id: crypto.randomUUID(), is_user: value.role === "user", content: value.content, extra: {} }; messages.get(id)!.push(message); return { id: message.id }; },
@@ -41,7 +41,17 @@ function fixture() {
     messages.set("copy", copy.messages.map((m, index) => ({ ...m, id: `copy-${index}` })));
     return ticket;
   };
-  return { service, setup, chats, messages, mutations, seen, breakRegenerate: () => { changeRegenerate = true; }, calls: () => calls, failAt: (value: number) => { failAt = value; }, failCleanup: () => { failCleanup = true; },
+  // What Lumiverse's own branch produces: the source's metadata and extras, with fork markers.
+  const branch = async () => {
+    const ticket = await service.prepare("user", "session", { chatId: "source", connectionId: "connection" });
+    const source = chats.get("source"), copied = messages.get("source")!.map((m, index) => ({ ...structuredClone(m), id: `copy-${index}` }));
+    chats.set("copy", { ...structuredClone(source), id: "copy", name: ticket.branchName, metadata: { ...structuredClone(source.metadata), branched_from: "source", branch_at_message: ticket.lastMessageId,
+      _swipe_variable_state: { version: 1 }, context_history_anchor_message_id: "copy-2" } });
+    messages.set("copy", copied);
+    return ticket;
+  };
+  const audio = (id: string) => { messages.get(id)![1].extra = { attachments: [{ type: "audio", image_id: "voice" }] }; };
+  return { service, setup, branch, audio, updates, chats, messages, mutations, seen, breakRegenerate: () => { changeRegenerate = true; }, calls: () => calls, failAt: (value: number) => { failAt = value; }, failCleanup: () => { failCleanup = true; },
     progress: (hook: (completed: number) => void) => { progressHook = hook; } };
 }
 test("future turns compare against the prompt behind the latest reply, without touching source history", async () => {
@@ -88,6 +98,34 @@ test("overlapping preparations are rejected before source reads complete", async
   const f = fixture(); const first = f.service.prepare("user", "session", { chatId: "source" });
   await expect(f.service.prepare("user", "session", { chatId: "source" })).rejects.toThrow("already");
   const ticket = await first; f.service.cancel("user", "session", ticket.id);
+});
+test("chats without audio are branched on the server; the branch is adopted, cleaned and removed", async () => {
+  const f = fixture(), ticket = await f.branch(); expect(ticket.copy).toBe("branch");
+  const report = await f.service.run("user", "session", ticket.id, "copy");
+  expect(report.complete).toBe(true); expect(f.chats.has("copy")).toBe(false);
+  const adopted = f.updates.find(u => u.id === "copy")!.patch.metadata;
+  expect(adopted).toMatchObject({ lumicache_simulation: ticket.id, lumicache_simulation_source: "source", context_history_anchor_message_id: "copy-2" });
+  for (const key of ["branched_from", "branch_at_message", "_swipe_variable_state"]) expect(adopted).not.toHaveProperty(key);
+  expect(report.limitations.some(note => note.includes("context anchor"))).toBe(true);
+  expect(f.mutations.every(id => id === "copy")).toBe(true);
+});
+test("chats with audio use the import copy, and a branch that holds audio is never deleted", async () => {
+  const withAudio = fixture(); withAudio.audio("source");
+  expect((await withAudio.service.prepare("user", "session", { chatId: "source" })).copy).toBe("import");
+  // Audio added after preparation reaches the branch: nothing in it may be removed.
+  const f = fixture(), ticket = await f.branch(); f.audio("copy");
+  const report = await f.service.run("user", "session", ticket.id, "copy");
+  expect(report.complete).toBe(false); expect(report.error).toContain("audio");
+  expect(f.chats.has("copy")).toBe(true); expect(f.messages.get("copy")).toHaveLength(5);
+  expect(report.cleanupError).toContain("audio"); expect(report.scratchChatId).toBe("copy");
+});
+test("an abandoned branch is removed only when it is the ticket's copy and holds no audio", async () => {
+  const f = fixture(), ticket = await f.branch();
+  await f.service.abandon("user", "session", ticket.id, "copy"); expect(f.chats.has("copy")).toBe(false);
+  const kept = fixture(), second = await kept.branch(); kept.audio("copy");
+  await expect(kept.service.abandon("user", "session", second.id, "copy")).rejects.toThrow("audio"); expect(kept.chats.has("copy")).toBe(true);
+  const other = fixture(), third = await other.branch();
+  await expect(other.service.abandon("user", "session", third.id, "source")).rejects.toThrow("identity"); expect(other.chats.has("source")).toBe(true);
 });
 test("cancelling a running simulation retains completed previews and removes its copy", async () => {
   const f = fixture(), ticket = await f.setup();

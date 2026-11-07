@@ -49,7 +49,8 @@ export interface HealthReport {
   clipping?: ContextClipStatsDTO; usage?: CacheUsage;
   findingsOmitted?: number;
 }
-export interface SimulationTicket { id: string; sourceChatId: string; lastMessageId: string; branchName: string }
+/** `branch` copies on the server. Chats with audio are imported instead, because removing a branch's audio deletes the original files. */
+export interface SimulationTicket { id: string; sourceChatId: string; lastMessageId: string; branchName: string; copy: "branch" | "import" }
 export interface SimulationScenario { name: string; purpose: string; messages: LlmMessageDTO[] }
 export interface SimulationStep {
   name: string; purpose: string; inputs: LlmMessageDTO[]; snapshot: Snapshot; comparison: Comparison;

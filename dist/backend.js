@@ -3493,6 +3493,9 @@ async function memoryFinding(api, user, settleMs = 1500) {
 function signature(value) {
   return createHash5("sha256").update(stableJson(value)).digest("hex");
 }
+var TICKET_MS = 900000;
+var hasAudio = (messages) => messages.some((message) => Array.isArray(message.extra?.attachments) && message.extra.attachments.some((item) => item?.type === "audio"));
+var BRANCH_METADATA = ["_swipe_variable_state", "branched_from", "branch_at_message", "another_one_applied_variables", "another_one_fork"];
 function withCacheTtl(report, sources, settings) {
   const finding = ttlFinding(sources.connection, report.model, validateSettings(settings));
   if (finding)
@@ -3568,17 +3571,40 @@ class HealthService {
       const last = messages.at(-1);
       if (!last)
         throw new Error("Send a message in this chat before running a simulation.");
-      const id = crypto.randomUUID(), ticket = { id, sourceChatId: input.chatId, lastMessageId: last.id, branchName: `LumiCache simulation ${id}` };
+      const id = crypto.randomUUID(), ticket = {
+        id,
+        sourceChatId: input.chatId,
+        lastMessageId: last.id,
+        branchName: `LumiCache simulation ${id}`,
+        copy: hasAudio(messages) ? "import" : "branch"
+      };
       const timer = setTimeout(() => {
         if (!this.jobs.get(id)?.running)
           this.jobs.delete(id);
-      }, 120000);
+      }, TICKET_MS);
       timer.unref?.();
-      this.jobs.set(id, { user, session, sources, ticket, expires: Date.now() + 120000, running: false, cancelled: false, timer });
+      this.jobs.set(id, { user, session, sources, ticket, expires: Date.now() + TICKET_MS, running: false, cancelled: false, timer });
       return ticket;
     } finally {
       this.preparing.delete(user);
     }
+  }
+  ours(chat, job) {
+    if (!chat || chat.id === job.sources.chat.id || chat.name !== job.ticket.branchName)
+      return false;
+    const metadata = chat.metadata ?? {};
+    return metadata.lumicache_simulation === job.ticket.id ? metadata.lumicache_simulation_source === job.sources.chat.id : job.ticket.copy === "branch" && metadata.branched_from === job.sources.chat.id;
+  }
+  async discard(user, job, chatId) {
+    const chat = await this.api.chats.get(chatId, user);
+    if (!chat)
+      return;
+    if (!this.ours(chat, job))
+      throw new Error("The copy's identity changed; it was preserved.");
+    if (hasAudio(await this.api.chat.getMessages(chatId)))
+      throw new Error("The copy contains audio attachments, so it was kept to protect the original audio files.");
+    if (!await this.api.chats.delete(chatId, user))
+      throw new Error("The temporary branch could not be deleted.");
   }
   cancel(user, session, id) {
     const job = this.jobs.get(id);
@@ -3590,6 +3616,12 @@ class HealthService {
       clearTimeout(job.timer);
       this.jobs.delete(id);
     }
+    return job;
+  }
+  async abandon(user, session, id, scratchChatId) {
+    const job = this.cancel(user, session, id);
+    if (!job.running)
+      await this.discard(user, job, scratchChatId);
   }
   async run(user, session, id, scratchChatId) {
     const job = this.jobs.get(id);
@@ -3599,7 +3631,7 @@ class HealthService {
     let scratch;
     try {
       const candidate = await this.api.chats.get(scratchChatId, user);
-      if (!candidate || candidate.id === job.sources.chat.id || candidate.name !== job.ticket.branchName || candidate.metadata.lumicache_simulation_source !== job.sources.chat.id || candidate.metadata.lumicache_simulation !== id)
+      if (!this.ours(candidate, job))
         throw new Error("The simulation copy does not match this ticket. No messages were changed.");
       scratch = candidate;
     } catch (error) {
@@ -3632,11 +3664,20 @@ class HealthService {
       report.limitations.push(`${scratch.metadata.lumicache_omitted_audio} audio attachments were excluded from the disposable copy because the host treats their files as message-owned. Audio-related cache behavior is not tested; original audio is preserved.`);
     try {
       const sourceMessages = await this.api.chat.getMessages(job.sources.chat.id), initialCopy = await this.api.chat.getMessages(scratch.id);
+      if (hasAudio(initialCopy))
+        throw new Error("The chat gained audio attachments during setup. Run the simulation again.");
       if (sourceMessages.at(-1)?.id !== job.ticket.lastMessageId || sourceMessages.length !== initialCopy.length || sourceMessages.some((message, index) => message.content !== initialCopy[index].content || message.is_user !== initialCopy[index].is_user))
         throw new Error("The source conversation changed before the simulation started. Retry with the latest history.");
-      const anchorIndex = Number(scratch.metadata.lumicache_simulation_anchor);
+      if (scratch.metadata.lumicache_simulation !== id) {
+        const metadata = { ...scratch.metadata };
+        for (const key of BRANCH_METADATA)
+          delete metadata[key];
+        scratch = await this.api.chats.update(scratch.id, { metadata: { ...metadata, lumicache_simulation: id, lumicache_simulation_source: job.sources.chat.id, lumicache_omitted_audio: 0 } }, user);
+      }
+      const anchorIndex = job.ticket.copy === "branch" ? initialCopy.findIndex((message) => message.id === scratch.metadata.context_history_anchor_message_id) : Number(scratch.metadata.lumicache_simulation_anchor);
       if (Number.isInteger(anchorIndex) && anchorIndex >= 0 && initialCopy[anchorIndex]) {
-        scratch = await this.api.chats.update(scratch.id, { metadata: { ...scratch.metadata, context_history_anchor_message_id: initialCopy[anchorIndex].id } }, user);
+        if (scratch.metadata.context_history_anchor_message_id !== initialCopy[anchorIndex].id)
+          scratch = await this.api.chats.update(scratch.id, { metadata: { ...scratch.metadata, context_history_anchor_message_id: initialCopy[anchorIndex].id } }, user);
         report.limitations.push("The current context anchor is preserved for future scenarios. Historical samples before that anchor are reconstructed without it.");
       }
       const branchPreset = await this.api.presets.getActive(scratch.id, user);
@@ -3807,13 +3848,7 @@ class HealthService {
           errors.push(`Temporary regex ${ruleId}: ${errorText(error)}`);
         }
       try {
-        const current = await this.api.chats.get(scratch.id, user);
-        if (current) {
-          if (current.name !== job.ticket.branchName || current.metadata.lumicache_simulation_source !== job.sources.chat.id || current.metadata.lumicache_simulation !== id)
-            throw new Error("The copy's identity changed; it was preserved.");
-          if (!await this.api.chats.delete(scratch.id, user))
-            throw new Error("The temporary branch could not be deleted.");
-        }
+        await this.discard(user, job, scratch.id);
       } catch (error) {
         errors.push(errorText(error));
       }
@@ -4742,10 +4777,18 @@ spindle.onFrontendMessage((raw, user, session) => {
           value = report;
           break;
         }
-        case "cancelSimulation":
-          health.cancel(user, session, text(input.id));
-          agent.cancelledTicket(user, session, text(input.id));
+        case "cancelSimulation": {
+          const ticket = text(input.id);
+          try {
+            if (input.scratchChatId === undefined)
+              health.cancel(user, session, ticket);
+            else
+              await health.abandon(user, session, ticket, text(input.scratchChatId));
+          } finally {
+            agent.cancelledTicket(user, session, ticket);
+          }
           break;
+        }
         default:
           throw new Error("Unknown LumiCache operation.");
       }

@@ -1293,14 +1293,22 @@ async function readComposition(api = nativeAPI) {
 }
 
 // src/ui/simulation.ts
-async function nativeAPI(path, method = "GET", body, allow404 = false) {
-  const response = await fetch(`/api/v1/${path}`, {
-    method,
-    credentials: "same-origin",
-    headers: { "content-type": "application/json" },
-    ...body === undefined ? {} : { body: JSON.stringify(body) },
-    signal: AbortSignal.timeout(60000)
-  });
+var TRANSFER_MS = 600000;
+async function nativeAPI(path, method = "GET", body, allow404 = false, timeout = 60000) {
+  let response;
+  try {
+    response = await fetch(`/api/v1/${path}`, {
+      method,
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      ...body === undefined ? {} : { body: JSON.stringify(body) },
+      signal: AbortSignal.timeout(timeout)
+    });
+  } catch (error) {
+    if (error?.name !== "TimeoutError")
+      throw error;
+    throw new Error(`Lumiverse did not answer ${method} ${path.split("/")[0]} within ${Math.round(timeout / 1000)} seconds. Your chat was not changed.`);
+  }
   if (response.status === 404 && allow404)
     return null;
   const value = await response.json();
@@ -1315,14 +1323,22 @@ async function simulate(bridge, input, prepared, api = nativeAPI) {
   let profileCopied = false, submitted = false;
   try {
     const profile = await api(`preset-profiles/chat/${encodeURIComponent(input.chatId)}`, "GET", undefined, true);
-    const source = await api(`chats/${encodeURIComponent(input.chatId)}/export`);
-    const copy = simulationCopy(source, ticket);
-    if (JSON.stringify(copy).length > 64000000)
-      throw new Error("The conversation is too large to copy for this simulation (64 million characters). Cache health checks are still available.");
-    const branch = await api("chats/import", "POST", copy);
-    if (typeof branch.chat_id !== "string" || branch.chat_id === input.chatId || branch.name !== ticket.branchName)
-      throw new Error("Lumiverse returned an unexpected simulation copy. The source chat was not modified.");
-    scratchId = branch.chat_id;
+    if (ticket.copy === "branch") {
+      const branch = await api(`chats/${encodeURIComponent(input.chatId)}/branch`, "POST", { message_id: ticket.lastMessageId, name: ticket.branchName });
+      if (typeof branch?.id === "string" && branch.id !== input.chatId)
+        scratchId = branch.id;
+      if (!scratchId || branch.name !== ticket.branchName || branch.metadata?.branched_from !== input.chatId)
+        throw new Error("Lumiverse returned an unexpected simulation copy. The source chat was not modified.");
+    } else {
+      const source = await api(`chats/${encodeURIComponent(input.chatId)}/export`, "GET", undefined, false, TRANSFER_MS);
+      const copy = simulationCopy(source, ticket);
+      if (JSON.stringify(copy).length > 64000000)
+        throw new Error("The conversation is too large to copy for this simulation (64 million characters). Cache health checks are still available.");
+      const imported = await api("chats/import", "POST", copy, false, TRANSFER_MS);
+      if (typeof imported.chat_id !== "string" || imported.chat_id === input.chatId || imported.name !== ticket.branchName)
+        throw new Error("Lumiverse returned an unexpected simulation copy. The source chat was not modified.");
+      scratchId = imported.chat_id;
+    }
     if (profile) {
       profileCopied = true;
       await api(`preset-profiles/chat/${encodeURIComponent(scratchId)}`, "PUT", {
@@ -1340,7 +1356,7 @@ async function simulate(bridge, input, prepared, api = nativeAPI) {
       submitted = false;
   } finally {
     const cleanupErrors = [];
-    if (scratchId && !submitted) {
+    if (scratchId && !submitted && ticket.copy === "import") {
       try {
         await api(`chats/${encodeURIComponent(scratchId)}`, "DELETE", undefined, true);
       } catch {
@@ -1354,7 +1370,13 @@ async function simulate(bridge, input, prepared, api = nativeAPI) {
         cleanupErrors.push(`The simulation's temporary preset profile ${scratchId} could not be removed.`);
       }
     }
-    if (!submitted) {
+    if (!submitted && ticket.copy === "branch" && scratchId) {
+      try {
+        await bridge.call("cancelSimulation", { id: ticket.id, scratchChatId: scratchId });
+      } catch (error) {
+        cleanupErrors.push(`The temporary branch ${scratchId} could not be removed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else if (!submitted) {
       try {
         await bridge.call("cancelSimulation", { id: ticket.id });
       } catch {}
@@ -1680,6 +1702,7 @@ var SOURCE_EVENTS = [
   "WORLD_BOOK_DELETED",
   "WORLD_BOOK_ENTRY_CHANGED",
   "WORLD_BOOK_ENTRY_DELETED",
+  "SPINDLE_BATCH_CHANGED",
   "CHARACTER_EDITED",
   "CHARACTER_LIBRARY_CHANGED",
   "PERSONA_CHANGED",

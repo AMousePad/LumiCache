@@ -175,7 +175,12 @@ spindle.onFrontendMessage((raw, user, session) => {
           const report = await health.run(user, session, ticket, scratch);
           agent.simulationResult(user, session, ticket, report); value = report; break;
         }
-        case "cancelSimulation": health.cancel(user, session, text(input.id)); agent.cancelledTicket(user, session, text(input.id)); break;
+        case "cancelSimulation": {
+          const ticket = text(input.id);
+          try { if (input.scratchChatId === undefined) health.cancel(user, session, ticket); else await health.abandon(user, session, ticket, text(input.scratchChatId)); }
+          finally { agent.cancelledTicket(user, session, ticket); }
+          break;
+        }
         default: throw new Error("Unknown LumiCache operation.");
       }
       spindle.sendToFrontend({ type: "reply", id: request.id, value: prompts.pack(value, user, session) }, user, { frontendSessionId: session });
