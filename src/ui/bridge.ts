@@ -7,6 +7,8 @@ export class Bridge {
   private pending = new Map<string, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
   private unsubscribe: () => void;
   private disposed = false;
+  private sequence = 0;
+  private readonly idPrefix = Date.now().toString(36);
   constructor(private ctx: SpindleFrontendContext) {
     this.unsubscribe = ctx.onBackendMessage(raw => {
       const message = raw as Reply;
@@ -19,8 +21,9 @@ export class Bridge {
   }
   call<K extends keyof Operations>(operation: K, input: Operations[K]["input"]): Promise<Operations[K]["output"]> {
     if (this.disposed) return Promise.reject(new Error("Extension unloaded."));
-    const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
+      // Hosts before frontend-uuid-v1 have no ctx.uuid, and a request ID only has to be unique to this page.
+      const id = this.ctx.uuid?.v4() ?? `${this.idPrefix}-${++this.sequence}`;
       const timeout = operation === "simulate" ? 300_000 : operation === "audit" || operation === "prepareSimulation" ? 120_000 : 15_000;
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("LumiCache did not respond. Check the connection and extension permissions.")); }, timeout);
       this.pending.set(id, { resolve: value => resolve(value as Operations[K]["output"]), reject, timer });

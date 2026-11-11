@@ -14,7 +14,7 @@ const window = new Window();
 const originalDocument = globalThis.document;
 beforeAll(() => { globalThis.document = window.document as unknown as Document; });
 afterAll(() => { globalThis.document = originalDocument; window.happyDOM.abort(); });
-const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+const flush = async () => { for (let i = 0; i < 24; i++) await Promise.resolve(); };
 /** Holds lazy diff loading until a test scrolls the marker into view. */
 function visibility() {
   const saved = globalThis.IntersectionObserver;
@@ -64,7 +64,7 @@ function fixture(initial: View) {
       requests.push(request);
       queueMicrotask(async () => {
         let value: unknown;
-        if (request.operation === "load") value = lazy.store.pack(view, "user", "session");
+        if (request.operation === "load") value = await lazy.store.pack(view, "user", "session");
         else if (request.operation.startsWith("diff")) value = await lazy.call(request.operation as never, request.input as never);
         else if (request.operation === "decide") { view = { ...view, check: { ...view.check!, status: request.input.allow ? "allowed" : "cancelled" }, canDecide: false }; }
         else if (request.operation === "settings") { view = { ...view, settings: request.input }; value = request.input; }
@@ -199,7 +199,7 @@ describe("review UI", () => {
     const current = check(), stable = "A stable line of context.\n".repeat(200_000);
     current.before!.messages[0].body = stable + "OLD\n" + stable;
     current.after.messages[0].body = stable + "NEW\n" + stable;
-    const lazy = localClient(), root = renderDiff(lazy.store.pack(current, "user", "session"), lazy); await flush();
+    const lazy = localClient(), root = renderDiff(await lazy.store.pack(current, "user", "session"), lazy); await flush();
     expect(root.textContent).toContain("OLD"); expect(root.textContent).toContain("NEW");
     expect(root.textContent!.length).toBeLessThan(10_000);
     const expand = [...root.querySelectorAll("button")].find(b => b.textContent!.includes("Expand context"))!;
@@ -216,7 +216,7 @@ describe("review UI", () => {
     const lazy = localClient(), value = snapshot(Array.from({ length: 20 }, (_, i) => ({ role: "system", content: `Message ${i}\n`.repeat(500) })), context());
     const io = visibility();
     try {
-      const root = renderPrompt(lazy.store.pack(value, "user", "session"), lazy); await flush();
+      const root = renderPrompt(await lazy.store.pack(value, "user", "session"), lazy); await flush();
       expect(root.querySelectorAll("details.lc-change[open]")).toHaveLength(1);
       expect(root.querySelectorAll(".lc-add")).toHaveLength(0);
       expect(root.querySelectorAll(".lc-diff-row").length).toBeLessThanOrEqual(100);
@@ -225,7 +225,7 @@ describe("review UI", () => {
   });
   test("whitespace markers reveal trailing spaces and newline-only changes without adding internal headers", async () => {
     const current = check(); current.before!.messages[0].body = "line "; current.after.messages[0].body = "line\n";
-    const lazy = localClient(), root = renderDiff(lazy.store.pack(current, "user", "session"), lazy); await flush(); const toggle = root.querySelector("input")!;
+    const lazy = localClient(), root = renderDiff(await lazy.store.pack(current, "user", "session"), lazy); await flush(); const toggle = root.querySelector("input")!;
     expect(root.querySelector(".lc-diff")!.textContent).not.toContain("contentKind");
     toggle.checked = true; toggle.dispatchEvent(new window.Event("change") as unknown as Event);
     expect(root.querySelector(".lc-remove")!.textContent).toContain("line·");

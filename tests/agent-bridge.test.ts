@@ -92,13 +92,13 @@ test("simulation waits for profile cleanup, propagates errors and exposes bounde
   const large = snapshot(messages("cache ".repeat(1_000_000)), context());
   const result: SimulationReport = { sourceChatId: "chat", at: Date.now(), seed: "ticket", complete: true, health: f.report, history: [], limitations: [],
     steps: [{ name: "Baseline", purpose: "Reference", inputs: [], snapshot: large, comparison: compare(null, large), changedSources: [] }] };
-  f.bridge.simulationResult("user", "b", "ticket", result);
+  await f.bridge.simulationResult("user", "b", "ticket", result);
   expect((await f.call("job", { jobId: job.id })).phase).toBe("cleaning");
   const stored = await f.call("report", { chatId: "chat" }); expect(JSON.stringify(stored).length).toBeLessThan(3000);
   const ref = stored.simulation.steps[0].snapshot.reference;
   const diff = await f.call("diff_open", { after: ref, newIndex: 0 }); expect(diff.page.items).toHaveLength(20);
   const page = await f.call("diff_page", { diffId: diff.id, cursor: diff.page.next }); expect(page.items).toHaveLength(20);
-  await expect(f.call("diff_open", { after: f.prompts.expose(large, "user", "b").reference, newIndex: 0 })).rejects.toThrow("another browser");
+  await expect(f.call("diff_open", { after: (await f.prompts.expose(large, "user", "b")).reference, newIndex: 0 })).rejects.toThrow("another browser");
   await expect(f.call("diff_page", { userId: "foreign", diffId: diff.id })).rejects.toThrow("expired");
   f.bridge.finish("user", "b", job.id, { cleanupError: "Profile cleanup failed", scratchChatId: "scratch" });
   expect((await f.call("job", { jobId: job.id }))).toMatchObject({ phase: "failed", error: "Profile cleanup failed", scratchChatId: "scratch" });

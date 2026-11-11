@@ -89,7 +89,7 @@ const client = () => {
 test("live diffs mark changed words as safe text and number lines compactly", async () => {
   const ctx = context(), before = snapshot([{ role: "system", content: "The red fox.\n<b>x</b>\n" }], ctx), after = snapshot([{ role: "system", content: "The blue fox.\n<b>x</b>\n" }], ctx);
   const check: Check = { id: "c", chatId: "chat", generationId: "g", deadline: 0, status: "completed", comparison: compare(before, after), before, after };
-  const lazy = client(), root = renderDiff(lazy.store.pack(check, "user", "session"), lazy); await flush();
+  const lazy = client(), root = renderDiff(await lazy.store.pack(check, "user", "session"), lazy); await flush();
   expect(root.querySelector(".lc-remove .lc-word")!.textContent).toBe("red"); expect(root.querySelector(".lc-add .lc-word")!.textContent).toBe("blue");
   expect(root.querySelectorAll(".lc-diff-row")[0].querySelectorAll(".lc-line-number")).toHaveLength(1);
   expect(root.querySelector("b")).toBeNull();
@@ -100,7 +100,7 @@ test("live diffs mark changed words as safe text and number lines compactly", as
 });
 test("side by side pairs a replaced line in one row and shows an unchanged message in one column", async () => {
   const ctx = context(), before = snapshot([{ role: "system", content: "Same\nThe red fox.\nGone line\n" }], ctx), after = snapshot([{ role: "system", content: "Same\nThe blue fox.\n" }], ctx);
-  const lazy = client(), [a, b] = lazy.store.pack([before, after], "user", "session");
+  const lazy = client(), [a, b] = await lazy.store.pack([before, after], "user", "session");
   const pair = renderTurnDiff(a, b, { oldIndex: 0, newIndex: 0 }, lazy); await flush();
   const rows = [...pair.querySelectorAll(".lc-sbs-row")], changed = rows.find(row => row.textContent!.includes("red"))!;
   expect(changed.textContent).toContain("blue");

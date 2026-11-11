@@ -3,6 +3,8 @@ import { Guard } from "../src/guard";
 import { context, messages } from "./fixtures";
 import type { BaselinePersistence, SavedBaseline } from "../src/baseline";
 const pause = { mode: "pause" as const };
+/** Lets inspect() receive its check ID from the host and reach the review. */
+const flush = async () => { for (let i = 0; i < 16; i++) await Promise.resolve(); };
 async function baseline(guard: Guard) {
   const ctx = context(); const input = messages();
   expect(await guard.inspect(input, ctx, pause)).toBe(input);
@@ -13,7 +15,7 @@ async function baseline(guard: Guard) {
 describe("pre-send guard", () => {
   test("changed prompt blocks until an exact, session-owned decision; cancelled requests keep the baseline", async () => {
     const guard = new Guard(() => {}); await baseline(guard);
-    const ctx = context(), input = messages("Changed"), pending = guard.inspect(input, ctx, pause);
+    const ctx = context(), input = messages("Changed"), pending = guard.inspect(input, ctx, pause); await flush();
     const check = guard.view("user", "chat", "browser").check!;
     expect(check.status).toBe("waiting");
     expect(() => guard.decide("other", "browser", check.id, true)).toThrow();
@@ -29,7 +31,7 @@ describe("pre-send guard", () => {
   test("allowing one request does not authorize another and only success advances the baseline", async () => {
     const guard = new Guard(() => {}); await baseline(guard);
     for (const success of [false, true]) {
-      const ctx = context(), input = messages("Changed"), pending = guard.inspect(input, ctx, pause);
+      const ctx = context(), input = messages("Changed"), pending = guard.inspect(input, ctx, pause); await flush();
       const check = guard.view("user", "chat").check!;
       expect(check.status).toBe("waiting"); guard.decide("user", "browser", check.id, true);
       expect(await pending).toBe(input);
@@ -47,7 +49,7 @@ describe("pre-send guard", () => {
     expect(await guard.inspect(input, planned, pause, "e2")).toBe(input);
     expect(guard.view("user", "chat").check!.status).toBe("allowed");
     guard.finish("user", planned.generationId, true);
-    const accident = guard.inspect(messages("Accident"), context(), pause, "e2");
+    const accident = guard.inspect(messages("Accident"), context(), pause, "e2"); await flush();
     const check = guard.view("user", "chat", "browser").check!;
     expect(check.status).toBe("waiting");
     guard.decide("user", "browser", check.id, false);
@@ -72,7 +74,7 @@ describe("pre-send guard", () => {
   test("abort and expired review cannot leak the provider request", async () => {
     const guard = new Guard(() => {}); await baseline(guard);
     const controller = new AbortController();
-    const pending = guard.inspect(messages("Changed"), context({ signal: controller.signal }), pause);
+    const pending = guard.inspect(messages("Changed"), context({ signal: controller.signal }), pause); await flush();
     const id = guard.view("user", "chat").check!.id; controller.abort();
     await expect(pending).rejects.toThrow("stopped");
     expect(() => guard.decide("user", "browser", id, true)).toThrow();
@@ -80,7 +82,7 @@ describe("pre-send guard", () => {
   });
   test("missing frontend pauses for a returning browser; warn, off and dry runs have explicit behavior", async () => {
     const guard = new Guard(() => {}); await baseline(guard);
-    const pending = guard.inspect(messages("Changed"), context({ frontendSessionId: undefined }), pause);
+    const pending = guard.inspect(messages("Changed"), context({ frontendSessionId: undefined }), pause); await flush();
     const id = guard.view("user", "chat").check!.id;
     expect(guard.view("user", "chat").canDecide).toBe(false);
     expect(() => guard.decide("user", undefined, id, true)).toThrow();
@@ -96,7 +98,7 @@ describe("pre-send guard", () => {
   });
   test("disconnect releases review ownership without cancelling or allowing the request", async () => {
     const guard = new Guard(() => {}); await baseline(guard);
-    const ctx = context(), pending = guard.inspect(messages("Changed"), ctx, pause);
+    const ctx = context(), pending = guard.inspect(messages("Changed"), ctx, pause); await flush();
     const id = guard.view("user", "chat", "browser").check!.id;
     guard.resume("user", "chat", "other-browser");
     expect(guard.view("user", "chat", "other-browser").canDecide).toBe(false);

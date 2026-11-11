@@ -72,6 +72,7 @@ function text(value: unknown): string {
 }
 new CatBridge(spindle, guard, settings, plannedBreakEpoch).register();
 if (!spindle.host.capabilities["interceptor-context-v1"]) throw new Error("LumiCache requires a Lumiverse build with bound interceptor context.");
+if (!spindle.host.capabilities["uuid-v1"]) throw new Error("LumiCache requires a Lumiverse build with Spindle UUID support.");
 spindle.on("CHAT_DELETED", (event, user) => {
   const id = (event as { id?: unknown } | null)?.id;
   if (user && typeof id === "string") { guard.forget(user, id); autoRefresh.cancel(user, id); }
@@ -125,7 +126,7 @@ spindle.onFrontendMessage((raw, user, session) => {
         case "agentClaim": value = agent.claim(user, session, text(input.id)); break;
         case "agentFinish": agent.finish(user, session, text(input.id), input); break;
         case "diffList": value = prompts.list(user, session, input as never); break;
-        case "diffOpen": value = prompts.open(user, session, input as never); break;
+        case "diffOpen": value = await prompts.open(user, session, input as never); break;
         case "diffPage": value = prompts.page(user, session, input as never); break;
         case "load": {
           const chatId = input.chatId === undefined ? undefined : text(input.chatId);
@@ -173,7 +174,7 @@ spindle.onFrontendMessage((raw, user, session) => {
           const ticket = text(input.id), scratch = text(input.scratchChatId);
           agent.submitted(user, session, ticket, scratch);
           const report = await health.run(user, session, ticket, scratch);
-          agent.simulationResult(user, session, ticket, report); value = report; break;
+          await agent.simulationResult(user, session, ticket, report); value = report; break;
         }
         case "cancelSimulation": {
           const ticket = text(input.id);
@@ -183,7 +184,7 @@ spindle.onFrontendMessage((raw, user, session) => {
         }
         default: throw new Error("Unknown LumiCache operation.");
       }
-      spindle.sendToFrontend({ type: "reply", id: request.id, value: prompts.pack(value, user, session) }, user, { frontendSessionId: session });
+      spindle.sendToFrontend({ type: "reply", id: request.id, value: await prompts.pack(value, user, session) }, user, { frontendSessionId: session });
     } catch (error) { spindle.sendToFrontend({ type: "reply", id: request.id, error: errorText(error) }, user, { frontendSessionId: session }); }
   })();
 });

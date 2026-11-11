@@ -6,6 +6,7 @@ import { compare, snapshot } from "./compare";
 import type { Check, InspectionContext, Settings, Snapshot } from "./shared";
 import { validateSettings } from "./settings";
 import { historyMessage, preserve, retain, tailStart, type TokenCounter } from "./consistency";
+import { uuid } from "./uuid";
 
 interface ChatState { releasedThrough?: number; restored?: boolean; baseline: Snapshot | null; check: Check | null; busy: boolean; retained?: ReturnType<typeof retain>; candidate?: ReturnType<typeof retain>; replies: number; epoch?: string | null; connection?: string; cached?: number }
 /** Providers round their counts and cache on a best-effort basis, so a drop this small says nothing. */
@@ -164,9 +165,10 @@ export class Guard {
       messages = result.messages;
       policy = { action: state.retained ? "preserved" : "seed", restored: result.restored, relocated: result.relocated, replies: state.replies, approximate: result.approximate };
     }
+    const checkId = await uuid();
     context.signal.throwIfAborted();
     const after = snapshot(messages, context);
-    check = { id: crypto.randomUUID(), chatId: context.chatId, generationId: context.generationId,
+    check = { id: checkId, chatId: context.chatId, generationId: context.generationId,
       deadline: Math.min(Date.now() + 290_000, context.interceptorDeadlineAt - 1000), status: "allowed",
       comparison: compare(state.baseline, after), before: state.baseline, after, policy };
     if (context.label) check.comparison.summary = `${context.label}: ${check.comparison.summary}`;

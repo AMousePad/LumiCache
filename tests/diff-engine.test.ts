@@ -54,24 +54,29 @@ test("separated changes collapse unchanged interiors; a total rewrite stays page
   expect(rewritten.note).toContain("replacement"); expect(rewritten.page().next).toBe(100);
   expect(reconstruct(rewritten)).toEqual({ old: "before\n".repeat(3000), next: "after\n".repeat(3000) });
 });
-test("snapshot references keep full prompts out of replies and enforce user/session ownership", () => {
+test("snapshot references keep full prompts out of replies and enforce user/session ownership", async () => {
   const store = new PromptStore(), source = snapshot([{ role: "system", content: "cache ".repeat(1_000_000) }], context());
-  const view = store.pack({ source, copies: [source, source] }, "user", "session");
+  const view = await store.pack({ source, copies: [source, source] }, "user", "session");
   expect(JSON.stringify(view).length).toBeLessThan(2000); expect(view.source.messages).toHaveLength(0);
   expect(view.source.reference).toBe(view.copies[0].reference);
   const input = { after: view.source.reference!, newIndex: 0 };
-  expect(() => store.open("foreign", "session", input)).toThrow("another browser");
-  expect(() => store.open("user", "foreign", input)).toThrow("another browser");
-  const plan = store.open("user", "session", input); expect(JSON.stringify(plan).length).toBeLessThan(120_000);
+  await expect(store.open("foreign", "session", input)).rejects.toThrow("another browser");
+  await expect(store.open("user", "foreign", input)).rejects.toThrow("another browser");
+  const plan = await store.open("user", "session", input); expect(JSON.stringify(plan).length).toBeLessThan(120_000);
   expect(() => store.page("foreign", "session", { id: plan.id })).toThrow("expired");
   expect(() => store.page("user", "foreign", { id: plan.id })).toThrow("expired");
   for (const cursor of [-1, 0.5, Infinity, NaN, 99_999]) expect(() => store.page("user", "session", { id: plan.id, cursor })).toThrow();
   expect(() => store.page("user", "session", { id: plan.id, fold: 999 })).toThrow();
 });
-test("inserted messages do not turn unchanged subsequent messages into changes", () => {
+test("concurrent requests share one reference for a snapshot", async () => {
+  const store = new PromptStore(), source = snapshot([{ role: "system", content: "cache" }], context());
+  const [a, b] = await Promise.all([store.expose(source, "user", "session"), store.expose(source, "user", "session")]);
+  expect(a.reference).toBeString(); expect(a.reference).toBe(b.reference);
+});
+test("inserted messages do not turn unchanged subsequent messages into changes", async () => {
   const store = new PromptStore(), messages = ["one", "two", "three"].map(content => ({ role: "system" as const, content }));
-  const a = store.expose(snapshot(messages, context()), "u", "s");
-  const b = store.expose(snapshot([messages[0], { role: "system", content: "inserted" }, ...messages.slice(1)], context()), "u", "s");
+  const a = await store.expose(snapshot(messages, context()), "u", "s");
+  const b = await store.expose(snapshot([messages[0], { role: "system", content: "inserted" }, ...messages.slice(1)], context()), "u", "s");
   const page = store.list("u", "s", { before: a.reference, after: b.reference! });
   expect(page.unchanged).toBe(3); expect(page.total).toBe(1); expect(page.items[0]).toMatchObject({ kind: "added", newIndex: 1 });
   expect(store.list("u", "s", { before: a.reference, after: b.reference!, includeUnchanged: true }).total).toBe(4);

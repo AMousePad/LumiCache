@@ -5,6 +5,7 @@ import type { PromptStore, DiffInput } from "./prompt-store";
 import type { AuditInput, HealthReport, SimulationReport, SimulationTicket } from "./health/types";
 import { COVERAGE, errorText } from "./shared";
 import { AGENT_DOCS, DOCS_SURFACE } from "./agent-docs";
+import { uuid } from "./uuid";
 
 export const BRIDGE_PERMISSIONS = ["characters", "chats", "generation", "presets", "personas", "world_books", "regex_scripts", "chat_mutation"];
 export const CACHE_SURFACE = "lumicache_reports";
@@ -65,7 +66,9 @@ export class AgentBridge {
   private async start(user: string, request: Record<string, unknown>) {
     const chatId = id(request.chatId), kind = request.kind;
     if (kind !== "audit" && kind !== "simulation") throw new Error("Choose audit or simulation.");
-    const callId = id(request.callId); await this.owned(user, chatId); this.prune();
+    const callId = id(request.callId); await this.owned(user, chatId);
+    // Fetched before the checks below, so they and the job's creation stay one uninterrupted step.
+    const jobId = await uuid(); this.prune();
     const duplicate = [...this.jobs.values()].find(job => job.user === user && job.callId === callId);
     if (duplicate) {
       if (duplicate.kind !== kind || duplicate.input.chatId !== chatId || request.connectionId !== undefined && request.connectionId !== duplicate.input.connectionId)
@@ -78,7 +81,7 @@ export class AgentBridge {
     const browser = candidates.find(browser => browser.chatId === chatId) ?? candidates[0];
     if (!browser) throw new Error("Open Lumiverse with LumiCache enabled and keep the browser connected to run diagnostics.");
     const connectionId = request.connectionId === undefined ? browser.chatId === chatId ? browser.connectionId : undefined : id(request.connectionId);
-    const job: Job = { id: crypto.randomUUID(), user, session: browser.session, callId, kind,
+    const job: Job = { id: jobId, user, session: browser.session, callId, kind,
       input: { chatId, ...(connectionId ? { connectionId } : {}) }, phase: "queued", at: Date.now(), updated: Date.now(), progress: "Waiting for the connected browser.", cancelled: false };
     this.jobs.set(job.id, job); this.prune();
     this.timer(job, 15_000, () => this.end(job, "The browser did not acknowledge the diagnostic. Reconnect Lumiverse and retry."));
@@ -132,8 +135,8 @@ export class AgentBridge {
     this.remember(user, report.chatId, { audit: report });
     if (jobId) { const job = this.job(user, jobId); job.result = report; this.end(job); }
   }
-  simulationResult(user: string, session: string, ticketId: string, report: SimulationReport) {
-    const packed = this.prompts.pack(report, user, bridgeSession(user)); this.remember(user, report.sourceChatId, { simulation: packed });
+  async simulationResult(user: string, session: string, ticketId: string, report: SimulationReport) {
+    const packed = await this.prompts.pack(report, user, bridgeSession(user)); this.remember(user, report.sourceChatId, { simulation: packed });
     const job = [...this.jobs.values()].find(job => job.user === user && job.session === session && job.ticket === ticketId);
     if (job) {
       job.result = packed; job.phase = "cleaning"; job.updated = Date.now(); job.progress = "Removing the temporary preset profile.";
@@ -194,7 +197,7 @@ export class AgentBridge {
       }
       if (request.surfaceId !== CACHE_SURFACE) throw new Error("Unknown LumiCache surface.");
       const chatId = id(request.itemId); await this.owned(user, chatId);
-      if (request.field === "live") return { value: this.prompts.pack(this.guard.view(user, chatId), user, bridgeSession(user)) };
+      if (request.field === "live") return { value: await this.prompts.pack(this.guard.view(user, chatId), user, bridgeSession(user)) };
       if (request.field !== undefined && request.field !== "report") throw new Error("Read report or live. Use inspect_cache for paged diffs and findings.");
       return { value: this.report(user, chatId) };
     }

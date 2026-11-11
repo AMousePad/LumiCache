@@ -224,6 +224,8 @@ class Bridge {
   pending = new Map;
   unsubscribe;
   disposed = false;
+  sequence = 0;
+  idPrefix = Date.now().toString(36);
   constructor(ctx) {
     this.ctx = ctx;
     this.unsubscribe = ctx.onBackendMessage((raw) => {
@@ -244,8 +246,8 @@ class Bridge {
   call(operation, input) {
     if (this.disposed)
       return Promise.reject(new Error("Extension unloaded."));
-    const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
+      const id = this.ctx.uuid?.v4() ?? `${this.idPrefix}-${++this.sequence}`;
       const timeout = operation === "simulate" ? 300000 : operation === "audit" || operation === "prepareSimulation" ? 120000 : 15000;
       const timer = setTimeout(() => {
         this.pending.delete(id);

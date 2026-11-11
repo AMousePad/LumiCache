@@ -2237,6 +2237,9 @@ class DiffPlan {
   }
 }
 
+// src/uuid.ts
+var uuid = () => spindle.uuid.v4();
+
 // src/prompt-store.ts
 var LIMIT = 256000000;
 var TTL = 30 * 60000;
@@ -2307,10 +2310,16 @@ class PromptStore {
     if (this.lists.size > 64)
       this.lists.delete(this.lists.keys().next().value);
   }
-  expose(snapshot, user, session) {
-    let reference = this.references.get(snapshot), stored = reference ? this.snapshots.get(reference) : undefined;
-    if (!stored || stored.user !== user || stored.session !== session) {
-      reference = crypto.randomUUID();
+  reference(snapshot, user, session) {
+    const reference = this.references.get(snapshot), stored = reference ? this.snapshots.get(reference) : undefined;
+    return stored && stored.user === user && stored.session === session ? { reference, stored } : undefined;
+  }
+  async expose(snapshot, user, session) {
+    const minted = this.reference(snapshot, user, session) ? undefined : await uuid();
+    const existing = this.reference(snapshot, user, session);
+    let reference = existing?.reference, stored = existing?.stored;
+    if (!stored) {
+      reference = minted;
       stored = { user, session, snapshot, size: snapshot.messages.reduce((n, m) => n + m.body.length + m.header.length, 0), touched: Date.now() };
       this.references.set(snapshot, reference);
       this.snapshots.set(reference, stored);
@@ -2322,15 +2331,24 @@ class PromptStore {
     this.prune();
     return { at: snapshot.at, route: snapshot.route, model: snapshot.model, messages: [], reference, messageCount: snapshot.messages.length };
   }
-  pack(value, user, session) {
+  swap(value, replace) {
     if (!value || typeof value !== "object")
       return value;
     if (Array.isArray(value))
-      return value.map((item) => this.pack(item, user, session));
+      return value.map((item) => this.swap(item, replace));
     const object = value;
     if (Array.isArray(object.messages) && typeof object.route === "string" && typeof object.at === "number")
-      return this.expose(value, user, session);
-    return Object.fromEntries(Object.entries(object).map(([key, item]) => [key, this.pack(item, user, session)]));
+      return replace(value);
+    return Object.fromEntries(Object.entries(object).map(([key, item]) => [key, this.swap(item, replace)]));
+  }
+  async pack(value, user, session) {
+    const found = new Set;
+    const copy = this.swap(value, (snapshot) => {
+      found.add(snapshot);
+      return snapshot;
+    });
+    const exposed = new Map(await Promise.all([...found].map(async (snapshot) => [snapshot, await this.expose(snapshot, user, session)])));
+    return this.swap(copy, (snapshot) => exposed.get(snapshot));
   }
   get(id, user, session) {
     this.prune();
@@ -2385,7 +2403,7 @@ class PromptStore {
       ...cursor ? { previous: Math.max(0, cursor - 20) } : {}
     };
   }
-  open(user, session, input, pageRows = 100) {
+  async open(user, session, input, pageRows = 100) {
     const before = input.before ? this.get(input.before, user, session) : undefined, after = this.get(input.after, user, session);
     const read = (snapshot, index) => {
       if (index === undefined)
@@ -2396,7 +2414,7 @@ class PromptStore {
       return input.part === "header" ? message.header : message.body;
     };
     const oldText = read(before, input.oldIndex), newText = read(after, input.newIndex);
-    const plan = new DiffPlan(oldText, newText), id = crypto.randomUUID();
+    const plan = new DiffPlan(oldText, newText), id = await uuid();
     this.plans.set(id, { user, session, plan, touched: Date.now(), size: (oldText.length + newText.length) * 2 + plan.before.starts.byteLength * 3 + plan.after.starts.byteLength * 3 });
     this.prune();
     return { id, page: plan.page(0, undefined, pageRows) };
@@ -3010,10 +3028,11 @@ class Guard {
         messages = result.messages;
         policy = { action: state.retained ? "preserved" : "seed", restored: result.restored, relocated: result.relocated, replies: state.replies, approximate: result.approximate };
       }
+      const checkId = await uuid();
       context.signal.throwIfAborted();
       const after = snapshot(messages, context);
       check = {
-        id: crypto.randomUUID(),
+        id: checkId,
         chatId: context.chatId,
         generationId: context.generationId,
         deadline: Math.min(Date.now() + 290000, context.interceptorDeadlineAt - 1000),
@@ -3571,7 +3590,7 @@ class HealthService {
       const last = messages.at(-1);
       if (!last)
         throw new Error("Send a message in this chat before running a simulation.");
-      const id = crypto.randomUUID(), ticket = {
+      const id = await uuid(), ticket = {
         id,
         sourceChatId: input.chatId,
         lastMessageId: last.id,
@@ -3686,7 +3705,7 @@ class HealthService {
       for (const rule of job.sources.regex)
         if (rule.scope === "chat" && rule.scope_id === job.sources.chat.id) {
           const { id: _id, created_at: _created, updated_at: _updated, ...fields } = rule;
-          const clone = await this.api.regex_scripts.create({ ...fields, script_id: crypto.randomUUID(), folder: "", scope_id: scratch.id, preset_id: null }, user);
+          const clone = await this.api.regex_scripts.create({ ...fields, script_id: await uuid(), folder: "", scope_id: scratch.id, preset_id: null }, user);
           clonedRules.push(clone.id);
         }
       const sourceBefore = signature(await this.api.chat.getMessages(job.sources.chat.id));
@@ -4048,6 +4067,7 @@ class AgentBridge {
       throw new Error("Choose audit or simulation.");
     const callId = id(request.callId);
     await this.owned(user, chatId);
+    const jobId = await uuid();
     this.prune();
     const duplicate = [...this.jobs.values()].find((job) => job.user === user && job.callId === callId);
     if (duplicate) {
@@ -4065,7 +4085,7 @@ class AgentBridge {
       throw new Error("Open Lumiverse with LumiCache enabled and keep the browser connected to run diagnostics.");
     const connectionId = request.connectionId === undefined ? browser.chatId === chatId ? browser.connectionId : undefined : id(request.connectionId);
     const job = {
-      id: crypto.randomUUID(),
+      id: jobId,
       user,
       session: browser.session,
       callId,
@@ -4155,8 +4175,8 @@ class AgentBridge {
       this.end(job);
     }
   }
-  simulationResult(user, session, ticketId, report) {
-    const packed = this.prompts.pack(report, user, bridgeSession(user));
+  async simulationResult(user, session, ticketId, report) {
+    const packed = await this.prompts.pack(report, user, bridgeSession(user));
     this.remember(user, report.sourceChatId, { simulation: packed });
     const job = [...this.jobs.values()].find((job) => job.user === user && job.session === session && job.ticket === ticketId);
     if (job) {
@@ -4269,7 +4289,7 @@ class AgentBridge {
       const chatId = id(request.itemId);
       await this.owned(user, chatId);
       if (request.field === "live")
-        return { value: this.prompts.pack(this.guard.view(user, chatId), user, bridgeSession(user)) };
+        return { value: await this.prompts.pack(this.guard.view(user, chatId), user, bridgeSession(user)) };
       if (request.field !== undefined && request.field !== "report")
         throw new Error("Read report or live. Use inspect_cache for paged diffs and findings.");
       return { value: this.report(user, chatId) };
@@ -4617,6 +4637,8 @@ function text(value) {
 new CatBridge(spindle, guard, settings, plannedBreakEpoch).register();
 if (!spindle.host.capabilities["interceptor-context-v1"])
   throw new Error("LumiCache requires a Lumiverse build with bound interceptor context.");
+if (!spindle.host.capabilities["uuid-v1"])
+  throw new Error("LumiCache requires a Lumiverse build with Spindle UUID support.");
 spindle.on("CHAT_DELETED", (event, user) => {
   const id = event?.id;
   if (user && typeof id === "string") {
@@ -4703,7 +4725,7 @@ spindle.onFrontendMessage((raw, user, session) => {
           value = prompts.list(user, session, input);
           break;
         case "diffOpen":
-          value = prompts.open(user, session, input);
+          value = await prompts.open(user, session, input);
           break;
         case "diffPage":
           value = prompts.page(user, session, input);
@@ -4773,7 +4795,7 @@ spindle.onFrontendMessage((raw, user, session) => {
           const ticket = text(input.id), scratch = text(input.scratchChatId);
           agent.submitted(user, session, ticket, scratch);
           const report = await health.run(user, session, ticket, scratch);
-          agent.simulationResult(user, session, ticket, report);
+          await agent.simulationResult(user, session, ticket, report);
           value = report;
           break;
         }
@@ -4792,7 +4814,7 @@ spindle.onFrontendMessage((raw, user, session) => {
         default:
           throw new Error("Unknown LumiCache operation.");
       }
-      spindle.sendToFrontend({ type: "reply", id: request.id, value: prompts.pack(value, user, session) }, user, { frontendSessionId: session });
+      spindle.sendToFrontend({ type: "reply", id: request.id, value: await prompts.pack(value, user, session) }, user, { frontendSessionId: session });
     } catch (error) {
       spindle.sendToFrontend({ type: "reply", id: request.id, error: errorText(error) }, user, { frontendSessionId: session });
     }

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { diffArrays } from "diff";
 import { DiffPlan, type DiffPage } from "./diff-engine";
 import type { Snapshot } from "./shared";
+import { uuid } from "./uuid";
 
 export interface MessageChange { oldIndex?: number; newIndex?: number; role: string; kind: "added" | "removed" | "changed" | "unchanged"; headerChanged: boolean; depth?: number; nextDepth?: number }
 export interface MessagePage { items: MessageChange[]; total: number; unchanged: number; cursor: number; next?: number; previous?: number; note?: string }
@@ -51,10 +52,17 @@ export class PromptStore {
     // Derived list metadata never owns prompt strings.
     if (this.lists.size > 64) this.lists.delete(this.lists.keys().next().value!);
   }
-  expose(snapshot: Snapshot, user: string, session: string): Snapshot {
-    let reference = this.references.get(snapshot), stored = reference ? this.snapshots.get(reference) : undefined;
-    if (!stored || stored.user !== user || stored.session !== session) {
-      reference = crypto.randomUUID();
+  private reference(snapshot: Snapshot, user: string, session: string) {
+    const reference = this.references.get(snapshot), stored = reference ? this.snapshots.get(reference) : undefined;
+    return stored && stored.user === user && stored.session === session ? { reference: reference!, stored } : undefined;
+  }
+  async expose(snapshot: Snapshot, user: string, session: string): Promise<Snapshot> {
+    const minted = this.reference(snapshot, user, session) ? undefined : await uuid();
+    // Another request may have exposed this snapshot during the wait for the ID.
+    const existing = this.reference(snapshot, user, session);
+    let reference = existing?.reference, stored = existing?.stored;
+    if (!stored) {
+      reference = minted!;
       stored = { user, session, snapshot, size: snapshot.messages.reduce((n, m) => n + m.body.length + m.header.length, 0), touched: Date.now() };
       this.references.set(snapshot, reference); this.snapshots.set(reference, stored);
     } else { stored.touched = Date.now(); this.snapshots.delete(reference!); this.snapshots.set(reference!, stored); }
@@ -63,12 +71,19 @@ export class PromptStore {
   }
   // Replace only snapshot-shaped objects. Prompt bodies never travel in load or
   // simulation replies; the browser requests bounded pages when opened.
-  pack<T>(value: T, user: string, session: string): T {
+  private swap<T>(value: T, replace: (snapshot: Snapshot) => unknown): T {
     if (!value || typeof value !== "object") return value;
-    if (Array.isArray(value)) return value.map(item => this.pack(item, user, session)) as T;
+    if (Array.isArray(value)) return value.map(item => this.swap(item, replace)) as T;
     const object = value as Record<string, unknown>;
-    if (Array.isArray(object.messages) && typeof object.route === "string" && typeof object.at === "number") return this.expose(value as unknown as Snapshot, user, session) as T;
-    return Object.fromEntries(Object.entries(object).map(([key, item]) => [key, this.pack(item, user, session)])) as T;
+    if (Array.isArray(object.messages) && typeof object.route === "string" && typeof object.at === "number") return replace(value as unknown as Snapshot) as T;
+    return Object.fromEntries(Object.entries(object).map(([key, item]) => [key, this.swap(item, replace)])) as T;
+  }
+  async pack<T>(value: T, user: string, session: string): Promise<T> {
+    const found = new Set<Snapshot>();
+    // The second pass reads this private copy, since the guard can change the live value during the wait for IDs.
+    const copy = this.swap(value, snapshot => { found.add(snapshot); return snapshot; });
+    const exposed = new Map(await Promise.all([...found].map(async snapshot => [snapshot, await this.expose(snapshot, user, session)] as const)));
+    return this.swap(copy, snapshot => exposed.get(snapshot));
   }
   private get(id: string, user: string, session: string): Snapshot {
     this.prune(); const value = this.snapshots.get(id);
@@ -100,7 +115,7 @@ export class PromptStore {
     return { items: list.items.slice(cursor, cursor + 20), total, unchanged: list.unchanged, cursor, note: list.note,
       ...(cursor + 20 < total ? { next: cursor + 20 } : {}), ...(cursor ? { previous: Math.max(0, cursor - 20) } : {}) };
   }
-  open(user: string, session: string, input: DiffInput, pageRows = 100): { id: string; page: DiffPage } {
+  async open(user: string, session: string, input: DiffInput, pageRows = 100): Promise<{ id: string; page: DiffPage }> {
     const before = input.before ? this.get(input.before, user, session) : undefined, after = this.get(input.after, user, session);
     const read = (snapshot: Snapshot | undefined, index: number | undefined) => {
       if (index === undefined) return "";
@@ -108,7 +123,7 @@ export class PromptStore {
       return input.part === "header" ? message.header : message.body;
     };
     const oldText = read(before, input.oldIndex), newText = read(after, input.newIndex);
-    const plan = new DiffPlan(oldText, newText), id = crypto.randomUUID();
+    const plan = new DiffPlan(oldText, newText), id = await uuid();
     this.plans.set(id, { user, session, plan, touched: Date.now(), size: (oldText.length + newText.length) * 2 + plan.before.starts.byteLength * 3 + plan.after.starts.byteLength * 3 }); this.prune();
     return { id, page: plan.page(0, undefined, pageRows) };
   }

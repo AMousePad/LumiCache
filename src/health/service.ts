@@ -12,6 +12,7 @@ import { historicalCutoffs } from "./copy";
 import { memoryFinding } from "./memory";
 import { buildTimeline, normalizedHistory, promptOutline } from "./timeline";
 import { tailStart } from "../consistency";
+import { uuid } from "../uuid";
 import type { AuditInput, HealthReport, OutlineTurn, SimulationReport, SimulationScenario, SimulationTicket } from "./types";
 
 interface Job { user: string; session: string; sources: Sources; ticket: SimulationTicket; expires: number; running: boolean; cancelled: boolean; timer: ReturnType<typeof setTimeout> }
@@ -73,7 +74,7 @@ export class HealthService {
     try {
       const sources = await collectSources(this.api, user, input), messages = await this.api.chat.getMessages(input.chatId);
       const last = messages.at(-1); if (!last) throw new Error("Send a message in this chat before running a simulation.");
-      const id = crypto.randomUUID(), ticket: SimulationTicket = { id, sourceChatId: input.chatId, lastMessageId: last.id, branchName: `LumiCache simulation ${id}`,
+      const id = await uuid(), ticket: SimulationTicket = { id, sourceChatId: input.chatId, lastMessageId: last.id, branchName: `LumiCache simulation ${id}`,
         copy: hasAudio(messages) ? "import" : "branch" };
       const timer = setTimeout(() => { if (!this.jobs.get(id)?.running) this.jobs.delete(id); }, TICKET_MS); timer.unref?.();
       this.jobs.set(id, { user, session, sources, ticket, expires: Date.now() + TICKET_MS, running: false, cancelled: false, timer });
@@ -147,7 +148,7 @@ export class HealthService {
         throw new Error("The disposable branch does not resolve to the source chat's preset and block selections. The simulation was stopped.");
       for (const rule of job.sources.regex) if (rule.scope === "chat" && rule.scope_id === job.sources.chat.id) {
         const { id: _id, created_at: _created, updated_at: _updated, ...fields } = rule;
-        const clone = await this.api.regex_scripts.create({ ...fields, script_id: crypto.randomUUID(), folder: "", scope_id: scratch.id, preset_id: null }, user);
+        const clone = await this.api.regex_scripts.create({ ...fields, script_id: await uuid(), folder: "", scope_id: scratch.id, preset_id: null }, user);
         clonedRules.push(clone.id);
       }
       const sourceBefore = signature(await this.api.chat.getMessages(job.sources.chat.id));
